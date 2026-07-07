@@ -1,0 +1,67 @@
+{% extends 'base/layout.html' %}
+{% comment %}SPDX-License-Identifier: AGPL-3.0-or-later{% endcomment %}
+{% load static %}
+
+{% block title %}SoT Diagram{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+  <div class="col col-md-12">
+    <form method="get" class="row gx-2 gy-2 align-items-end" role="search" aria-label="Diagram scope controls">
+      <div class="col-auto">
+        <label for="scope-select" class="form-label">Scope</label>
+        <select id="scope-select" name="scope" class="form-select">
+          <option value="all"{% if scope.mode == 'all' %} selected{% endif %}>Whole SoT</option>
+          <option value="site"{% if scope.mode == 'site' %} selected{% endif %}>Site</option>
+          <option value="device"{% if scope.mode == 'device' %} selected{% endif %}>Device</option>
+          <option value="vm"{% if scope.mode == 'vm' %} selected{% endif %}>Virtual machine</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label for="site-id" class="form-label">Site ID</label>
+        <input type="number" id="site-id" name="site" class="form-control" value="{{ scope.site_id|default_if_none:'' }}" min="1">
+      </div>
+      <div class="col-auto">
+        <label for="device-id" class="form-label">Device ID</label>
+        <input type="number" id="device-id" name="device" class="form-control" value="{{ scope.device_id|default_if_none:'' }}" min="1">
+      </div>
+      <div class="col-auto">
+        <label for="vm-id" class="form-label">VM ID</label>
+        <input type="number" id="vm-id" name="vm" class="form-control" value="{{ scope.vm_id|default_if_none:'' }}" min="1">
+      </div>
+      <div class="col-auto">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="sanitize-toggle" name="sanitize" value="1"{% if sanitized %} checked{% endif %}>
+          <label class="form-check-label" for="sanitize-toggle">Sanitize (safe to share)</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Render</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row mb-2">
+  <div class="col col-md-12">
+    <span class="badge text-bg-grey">Nodes: {{ node_count }}</span>
+    <span class="badge text-bg-grey">Edges: {{ edge_count }}</span>
+    {% if sanitized %}<span class="badge text-bg-green">Sanitized — safe to share</span>{% else %}<span class="badge text-bg-red">Raw — contains identifying data</span>{% endif %}
+    <button type="button" id="copy-source" class="btn btn-sm btn-outline-primary ms-2">Copy Mermaid source</button>
+    <button type="button" id="toggle-source" class="btn btn-sm btn-outline-secondary">Toggle source</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div id="mermaid-canvas" class="mermaid" aria-label="NetBox source-of-truth Mermaid diagram"></div>
+    <pre id="mermaid-src" class="mermaid-src border rounded p-2 mt-2" aria-label="Mermaid source">{{ mermaid_source }}</pre>
+  </div>
+</div>
+{% endblock %}
+
+{% block javascript %}
+{{ block.super }}
+<script src="{% static 'netbox_mermaid/mermaid.min.js' %}"></script>
+<script src="{% static 'netbox_mermaid/diagram-init.js' %}"></script>
+{% endblock %}

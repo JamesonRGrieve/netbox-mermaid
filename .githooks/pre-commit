@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Pre-commit gate for netbox-mermaid (workspace CLAUDE.md §8):
+#   1. black --check (line-length 100) — formatter passes with zero diff.
+#   2. py_compile sweep — every .py file parses (the full NetBox test run is verification-owed;
+#      no live NetBox env in the build host — see DESIGN.md "Verification owed").
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+PKG="netbox_mermaid"
+
+# Resolve a black invocation: the `black` binary, else `python3 -m black`.
+BLACK=""
+if command -v black >/dev/null 2>&1; then
+    BLACK="black"
+elif python3 -m black --version >/dev/null 2>&1; then
+    BLACK="python3 -m black"
+fi
+
+if [ -n "$BLACK" ]; then
+    echo "pre-commit: black --check --line-length 100 $PKG"
+    $BLACK --check --line-length 100 "$PKG"
+else
+    echo "pre-commit: WARNING black not installed — skipping formatter check (install black to enforce)" >&2
+fi
+
+echo "pre-commit: py_compile sweep"
+find "$PKG" -name '*.py' -print0 | xargs -0 python3 -m py_compile
+echo "pre-commit: OK"
