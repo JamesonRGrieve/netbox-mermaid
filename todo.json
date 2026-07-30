@@ -2,7 +2,7 @@
   "version": 1,
   "domain": "netbox.plugins.mermaid",
   "title": "netbox-mermaid plugin",
-  "description": "Meta/visualization NetBox 4.6 plugin: introspects the whole SoT and renders it as one Mermaid flowchart (UI + source-string API), with a public-safe sanitize mode. No models, no hard deps — every in-house plugin is an OPTIONAL, apps.is_installed()-guarded collector. Baseline scaffold + full spec is committed and py_compile-clean; mermaid.min.js was vendored from jsdelivr (not stubbed). The items below are the deep work owed against a live NetBox.",
+  "description": "Meta/visualization NetBox 4.6 plugin: introspects the whole SoT and renders it BOTH as one Mermaid flowchart (curated topology) AND as an exhaustive SoT report in markdown/json/toon (UI + API), with a public-safe sanitize mode on the diagram. No models, no hard deps — the diagram has one apps.is_installed()-guarded collector per in-house plugin (services+host-roles, database, webserver, wordpress, ai, pki, email, federation, cloudflare, lb-acl, pf, dhcp, data-link, wireguard, reticulum, meshcore, zfs, guests); the report is fully generic (walks every netbox_* app + core apps, no per-plugin code). fs/smart/system-services are report-only (no useful topology). All modules py_compile-clean; TOON encoder + report renderers exercised offline. The items below are the deep work owed against a live NetBox.",
   "hierarchy": { "parent": null, "children": [] },
   "phases": [
     {
@@ -13,7 +13,7 @@
         {
           "number": "1.1",
           "feature": "Full test run",
-          "description": "`python /opt/netbox/app/netbox/manage.py test netbox_mermaid --keepdb -v2` green: test_builder (core Site/Device/VM graph → flowchart header, node ids/labels, subgraph nesting, escaping), test_sanitizer (no hostname/IP/secret leak, determinism, count preservation), test_api (GET diagram + ?sanitize=true → 200, non-empty mermaid, counts).",
+          "description": "`python /opt/netbox/app/netbox/manage.py test netbox_mermaid --keepdb -v2` green: test_builder (core graph → flowchart header, ids/labels, nesting, escaping), test_sanitizer (no hostname/IP/secret leak, determinism, count preservation), test_collectors (registry wiring + guarded-skip + kind-id abbreviation uniqueness), test_toon (encoder units), test_report (build_report structure, exhaustive fields, redaction/coercion helpers, markdown/json/toon render), test_api + test_report_api (GET diagram + report per format → 200, content-types, counts, download disposition, auth gate).",
           "sot": "NB",
           "done": false
         },
@@ -26,8 +26,15 @@
         },
         {
           "number": "1.3",
-          "feature": "Optional-source field-map re-confirm",
-          "description": "Re-confirm the collector field names against each deployed sibling wheel (netbox-services/-database/-webserver/-wordpress/-pki/-email/-federation). A renamed field degrades to a skipped source (guarded import), not a crash, but the collector should track the current names so its data actually appears.",
+          "feature": "Live SoT Report render + download",
+          "description": "Confirm the SoT Report page renders under a real prod-scale SoT in all three formats (Markdown table doc, structured JSON, TOON), the format selector + Include-empty toggle round-trip, and Download streams each format with the right content-type/filename. Spot-check secret redaction (no token/password/private_key VALUES; OpenBao path refs retained) and that per-row detail omitted from the diagram (firewall rules, DHCP options, ZFS datasets, SMART, tunables) is present.",
+          "sot": "NB",
+          "done": false
+        },
+        {
+          "number": "1.4",
+          "feature": "Optional-source field-map re-confirm (diagram collectors)",
+          "description": "Re-confirm each diagram collector's field names against the deployed sibling wheels. A renamed field degrades to a skipped source (guarded import), not a crash, but the collector should track current names so its data appears. The report is field-name-agnostic (generic introspection) and immune to this.",
           "sot": "NB",
           "done": false
         }
@@ -55,9 +62,9 @@
         {
           "number": "3.1",
           "feature": "Additional collectors",
-          "description": "Drop-in collectors for the remaining in-house plugins as they warrant visualization (e.g. netbox-ai inference deployments/GPUs, netbox-guests mounts) — one Collector subclass + one registry line each.",
+          "description": "DONE: drop-in collectors added for ai, cloudflare, lb-acl, pf, dhcp, data-link, wireguard, reticulum, meshcore, zfs, guests, and the netbox-services HostRole family — one Collector subclass + one registry line each, with colour/shape/sanitizer-abbr entries. fs/smart/system-services are intentionally report-only (no useful topology). Future plugins: same one-file drop-in.",
           "sot": "NB",
-          "done": false
+          "done": true
         },
         {
           "number": "3.2",

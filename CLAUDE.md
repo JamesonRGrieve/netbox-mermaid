@@ -27,9 +27,14 @@ safety feature — never weaken it.
 ### DO, ALWAYS:
 - Keep the plugin **model-free**. If you find yourself adding `models.py` / a migration, stop — this
   plugin reads existing objects, it does not own data.
-- Add a new source as a **one-file drop-in**: a `Collector` subclass in `collectors/`, guarded by
-  `app_label`, registered in `registry.py`. Import the source's models **inside** `collect()`, never
-  at module top.
+- Add a new **diagram** source as a **one-file drop-in**: a `Collector` subclass in `collectors/`,
+  guarded by `app_label`, registered in `registry.py`. Import the source's models **inside**
+  `collect()`, never at module top. Any new `kind` needs a colour in `builder._KIND_COLORS` **and** a
+  distinct abbreviation in `sanitizer._ID_ABBR` (+ a `_GENERIC_LABEL`).
+- The **report** needs **no** per-plugin code — it introspects generically. A new `netbox_*` plugin
+  and all its models appear in the report automatically. Keep it that way: never hand-write a report
+  serialiser for one model. The diagram is curated (topology only); the report is exhaustive (all
+  fields) — put per-row detail omitted from the diagram there, not in a bloated collector.
 - Reconstruct cross-plugin node ids via `nid(prefix, pk)` — never import a peer collector. A dangling
   edge (owning plugin absent) is dropped by the builder; that is the intended graceful behavior.
 - Escape every label through `builder.escape_label`; emit only labels into Mermaid, never `raw_attrs`.
@@ -63,14 +68,17 @@ safety feature — never weaken it.
 | `__init__.py` | `PluginConfig` — name `netbox_mermaid`, `base_url='mermaid'`, min/max 4.6, `required_plugins=[]` |
 | `collectors/base.py` | `Node` / `Edge` / `Scope` dataclasses, `nid()` id scheme, `Collector` base + `safe_collect` guard, host-resolution helpers |
 | `collectors/core.py` | always-on core: Site / Device / VM / Tenant |
-| `collectors/{services,database,webserver,wordpress,pki,email,federation}.py` | one optional source each |
-| `collectors/registry.py` | `COLLECTORS` list + `collect_all(scope)` — the extension point |
+| `collectors/{services,hostrole,database,webserver,wordpress,ai,pki,email,federation,cloudflare,lb_acl,pf,dhcp,datalink,wireguard,reticulum,meshcore,zfs,guests}.py` | one optional source each (guarded on `app_label`) |
+| `collectors/registry.py` | `COLLECTORS` list + `collect_all(scope)` — the diagram extension point |
 | `builder.py` | assemble → Mermaid `flowchart TD` (subgraph nesting, classDef/shape, escaping); `build_diagram(scope, sanitize)` orchestrator |
-| `sanitizer.py` | `Sanitizer` — public-safe deterministic redaction |
-| `views.py`, `urls.py`, `navigation.py` | UI page (`PluginMenu` "SoT Diagram") |
-| `templates/netbox_mermaid/diagram.html` | detail page (extends `base/layout.html`): scope + sanitize controls, copy/toggle, vendored render |
+| `sanitizer.py` | `Sanitizer` — public-safe deterministic redaction. Every emitted `kind` needs a **distinct** `_ID_ABBR` (the counter is per-kind; a shared abbr mints colliding synthetic ids) — `tests/test_collectors.py` enforces this |
+| `report/introspect.py` | **generic** SoT introspection: walks every model of the core apps + every installed `netbox_*` plugin, serialises all fields → one JSON-safe dict. No per-plugin code |
+| `report/toon.py` | standalone TOON encoder (no NetBox imports) — tabular uniform-object arrays, inline primitive arrays, `-` list fallback |
+| `report/render.py` | `render_report(data, fmt)` → `(content, content_type, filename)` for markdown / json / toon |
+| `views.py`, `urls.py`, `navigation.py` | UI pages (`PluginMenu` "SoT Diagram" + "SoT Report") |
+| `templates/netbox_mermaid/{diagram,report}.html` | detail pages (extend `base/layout.html`) |
 | `static/netbox_mermaid/mermaid.min.js`, `diagram-init.js` | vendored renderer + CSP-safe init |
-| `api/views.py`, `api/urls.py` | DRF `APIView` → `{mermaid, node_count, edge_count, sanitized}` |
+| `api/views.py`, `api/urls.py` | DRF `APIView`s → `diagram/` (`{mermaid, …counts, sanitized}`) + `report/` (raw content-typed markdown/json/toon) |
 
 ---
 
@@ -83,6 +91,13 @@ safety feature — never weaken it.
   are preserved. Pure (`SimpleTestCase`).
 - `tests/test_api.py`: `GET /api/plugins/mermaid/diagram/` (+ `?sanitize=true`) → 200, non-empty
   `mermaid`, integer counts, `sanitized` echo.
+- `tests/test_collectors.py`: registry wiring + guarded-skip safety; **kind-id abbreviation
+  uniqueness** (guards the synthetic-id-collision class of bug).
+- `tests/test_toon.py`: TOON encoder units (tabular / inline / fallback / quoting) — pure, no DB.
+- `tests/test_report.py`: `build_report` over a real graph → structure, exhaustive field capture,
+  redaction/coercion helpers, markdown/json/toon render.
+- `tests/test_report_api.py`: `GET /api/plugins/mermaid/report/` per format → content-type, parseable
+  JSON, seeded object present, download disposition, auth gate.
 - **Run**: `python /opt/netbox/app/netbox/manage.py test netbox_mermaid --keepdb -v2`.
 - **Verification owed (no NetBox env in the build host):** the full test run, plus a **live UI
   render** confirming the vendored `mermaid.min.js` draws under NetBox's CSP. `py_compile` passes on

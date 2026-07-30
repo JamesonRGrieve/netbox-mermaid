@@ -11,6 +11,10 @@ menu = PluginMenu(
                     link="plugins:netbox_mermaid:diagram",
                     link_text="SoT Diagram",
                 ),
+                PluginMenuItem(
+                    link="plugins:netbox_mermaid:report",
+                    link_text="SoT Report",
+                ),
             ),
         ),
     ),

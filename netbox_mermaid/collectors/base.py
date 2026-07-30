@@ -199,3 +199,42 @@ def host_in_scope(scope: Scope, obj: object) -> bool:
     if getattr(obj, "virtual_machine_id", None):
         return scope.includes_vm(obj.virtual_machine_id, vm_site_id(obj.virtual_machine))
     return False
+
+
+def display(obj: object, *fields: str) -> str:
+    """First truthy attribute among ``fields`` (stringified), else the object's ``str()``. Lets a
+    collector prefer a short ``name``/``slug`` label but fall back to the model's own ``__str__`` for
+    the many plugin models whose only display is a composite."""
+    for name in fields:
+        value = getattr(obj, name, None)
+        if value:
+            return str(value)
+    return str(obj)
+
+
+def device_ref(device: object | None) -> tuple[str | None, int | None]:
+    """Return (container node id, site id) for a plain ``device`` FK target (or ``(None, None)``)."""
+    if device is None:
+        return None, None
+    return nid("dev", device.pk), getattr(device, "site_id", None)
+
+
+def dual_host_ref(obj: object) -> tuple[str | None, int | None]:
+    """Return (container node id, site id) for an object anchored by the ``host_device`` /
+    ``host_vm`` pair (reticulum / meshcore nodes may sit on a device XOR a VM, or neither)."""
+    if getattr(obj, "host_device_id", None):
+        return nid("dev", obj.host_device_id), getattr(obj.host_device, "site_id", None)
+    if getattr(obj, "host_vm_id", None):
+        return nid("vm", obj.host_vm_id), vm_site_id(obj.host_vm)
+    return None, None
+
+
+def dual_host_in_scope(scope: Scope, obj: object) -> bool:
+    """Scope membership for a ``host_device`` / ``host_vm`` anchored object."""
+    if scope.mode == "all":
+        return True
+    if getattr(obj, "host_device_id", None):
+        return scope.includes_device(obj.host_device_id, getattr(obj.host_device, "site_id", None))
+    if getattr(obj, "host_vm_id", None):
+        return scope.includes_vm(obj.host_vm_id, vm_site_id(obj.host_vm))
+    return False

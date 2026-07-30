@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "netbox-mermaid"
-version = "0.0.1"
-description = "Introspect the whole NetBox source-of-truth and render it as one readable Mermaid diagram (UI + REST), with a public-safe sanitize mode"
+version = "0.1.0"
+description = "Introspect the whole NetBox source-of-truth: render it as a Mermaid diagram (with a public-safe sanitize mode) and export it as an exhaustive report in markdown / json / toon (UI + REST)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
@@ -23,15 +23,30 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Install the whole in-house SoT surface so every collector has data to introspect.
+# Install the whole in-house SoT surface so every collector (and the generic report) has data to
+# introspect. Still not hard deps — all are optional, guarded at collect time by apps.is_installed().
 all = [
     "netbox-services",
     "netbox-database",
     "netbox-wordpress",
     "netbox-webserver",
+    "netbox-ai",
     "netbox-pki",
     "netbox-email",
     "netbox-federation",
+    "netbox-cloudflare",
+    "netbox-load-balancing-acl",
+    "netbox-pf",
+    "netbox-dhcp",
+    "netbox-data-link",
+    "netbox-wireguard",
+    "netbox-reticulum",
+    "netbox-meshcore",
+    "netbox-zfs",
+    "netbox-guests",
+    "netbox-fs",
+    "netbox-smart",
+    "netbox-system-services",
 ]
 
 [project.urls]

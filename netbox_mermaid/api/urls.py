@@ -7,4 +7,5 @@ app_name = "netbox_mermaid"
 
 urlpatterns = [
     path("diagram/", views.DiagramAPIView.as_view(), name="diagram"),
+    path("report/", views.ReportAPIView.as_view(), name="report"),
 ]

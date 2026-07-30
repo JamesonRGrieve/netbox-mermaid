@@ -1,0 +1,52 @@
+{% extends 'base/layout.html' %}
+{% comment %}SPDX-License-Identifier: AGPL-3.0-or-later{% endcomment %}
+
+{% block title %}SoT Report{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+  <div class="col col-md-12">
+    <form method="get" class="row gx-2 gy-2 align-items-end" role="search" aria-label="Report format controls">
+      <div class="col-auto">
+        <label for="format-select" class="form-label">Format</label>
+        <select id="format-select" name="format" class="form-select">
+          <option value="markdown"{% if format == 'markdown' %} selected{% endif %}>Markdown</option>
+          <option value="json"{% if format == 'json' %} selected{% endif %}>JSON</option>
+          <option value="toon"{% if format == 'toon' %} selected{% endif %}>TOON</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="include-empty" name="include_empty" value="1"{% if include_empty %} checked{% endif %}>
+          <label class="form-check-label" for="include-empty">Include empty models</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Render</button>
+      </div>
+      <div class="col-auto">
+        <a class="btn btn-outline-primary"
+           href="?format={{ format }}{% if include_empty %}&include_empty=1{% endif %}&download=1"
+           role="button">Download</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="row mb-2">
+  <div class="col col-md-12">
+    <span class="badge text-bg-grey">Apps: {{ summary.apps }}</span>
+    <span class="badge text-bg-grey">Models: {{ summary.models }}</span>
+    <span class="badge text-bg-grey">Objects: {{ summary.objects }}</span>
+    {% if netbox_version %}<span class="badge text-bg-grey">NetBox {{ netbox_version }}</span>{% endif %}
+    {% if generated %}<span class="badge text-bg-grey">{{ generated }}</span>{% endif %}
+    <span class="badge text-bg-red">Raw — contains identifying data (internal use)</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <pre class="report-src border rounded p-2" aria-label="SoT report source">{{ report_source }}</pre>
+  </div>
+</div>
+{% endblock %}

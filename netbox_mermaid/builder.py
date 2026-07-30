@@ -42,6 +42,50 @@ _KIND_COLORS: dict[str, tuple[str, str, str]] = {
     "mailrelay": ("#234e52", "#81e6d9", "#ffffff"),
     "realm": ("#3182ce", "#bee3f8", "#ffffff"),
     "peer": ("#2b6cb0", "#bee3f8", "#ffffff"),
+    # host-role layer (netbox-services)
+    "hostrole": ("#744210", "#f6e05e", "#ffffff"),
+    "hostroleassign": ("#975a16", "#faf089", "#ffffff"),
+    # inference (netbox-ai)
+    "aicatalog": ("#44337a", "#d6bcfa", "#ffffff"),
+    "aivariant": ("#553c9a", "#d6bcfa", "#ffffff"),
+    "aideploy": ("#6b46c1", "#d6bcfa", "#ffffff"),
+    "airoute": ("#805ad5", "#e9d8fd", "#ffffff"),
+    "gpu": ("#22543d", "#9ae6b4", "#ffffff"),
+    # cloudflare edge / LB
+    "cftunnel": ("#9c4221", "#fbd38d", "#ffffff"),
+    "cfingress": ("#c05621", "#fbd38d", "#ffffff"),
+    "cfrecord": ("#b7791f", "#faf089", "#ffffff"),
+    "cflb": ("#c05621", "#fbd38d", "#ffffff"),
+    "cfpool": ("#dd6b20", "#fbd38d", "#ffffff"),
+    "cforigin": ("#ed8936", "#feebc8", "#ffffff"),
+    "cfmonitor": ("#975a16", "#faf089", "#ffffff"),
+    # load-balancer ACL layer
+    "lblistener": ("#702459", "#fbb6ce", "#ffffff"),
+    "lbrule": ("#97266d", "#fbb6ce", "#ffffff"),
+    "lbacl": ("#b83280", "#fed7e2", "#ffffff"),
+    "lbcert": ("#c53030", "#feb2b2", "#ffffff"),
+    # firewall (netbox-pf)
+    "pfgw": ("#9b2c2c", "#feb2b2", "#ffffff"),
+    "pfgwgroup": ("#822727", "#fc8181", "#ffffff"),
+    "pfalias": ("#c53030", "#feb2b2", "#ffffff"),
+    # DHCP / L2 control plane
+    "dhcp": ("#2c5282", "#90cdf4", "#ffffff"),
+    "datalink": ("#2a4365", "#90cdf4", "#ffffff"),
+    # WireGuard VPN
+    "wgtunnel": ("#22543d", "#9ae6b4", "#ffffff"),
+    "wgpeer": ("#276749", "#c6f6d5", "#ffffff"),
+    # Reticulum
+    "retnet": ("#44337a", "#d6bcfa", "#ffffff"),
+    "retnode": ("#553c9a", "#e9d8fd", "#ffffff"),
+    # MeshCore radio mesh
+    "meshnet": ("#234e52", "#81e6d9", "#ffffff"),
+    "meshnode": ("#285e61", "#b2f5ea", "#ffffff"),
+    # ZFS storage
+    "zfspool": ("#234e52", "#81e6d9", "#ffffff"),
+    "zfsvdev": ("#2c7a7b", "#b2f5ea", "#ffffff"),
+    # Proxmox guest extras
+    "guestdev": ("#3e4c59", "#b8c1cc", "#ffffff"),
+    "guestmount": ("#4a5568", "#cbd5e0", "#ffffff"),
 }
 _DEFAULT_COLOR = ("#4a5568", "#a0aec0", "#ffffff")
 
@@ -59,6 +103,20 @@ _KIND_SHAPE: dict[str, tuple[str, str]] = {
     "maildomain": ("([", "])"),
     "realm": ("([", "])"),
     "vm": ("(", ")"),
+    # new leaf kinds
+    "gpu": ("{{", "}}"),
+    "aivariant": ("([", "])"),
+    "aideploy": ("([", "])"),
+    "cfrecord": ("[/", "/]"),
+    "cforigin": ("[(", ")]"),
+    "cfmonitor": ("{{", "}}"),
+    "lbcert": ("[/", "/]"),
+    "zfsvdev": ("[(", ")]"),
+    "wgpeer": ("(", ")"),
+    "retnode": ("(", ")"),
+    "meshnode": ("(", ")"),
+    "pfalias": ("{{", "}}"),
+    "dhcp": ("[(", ")]"),
 }
 _DEFAULT_SHAPE = ("[", "]")
 

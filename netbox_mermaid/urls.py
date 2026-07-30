@@ -5,4 +5,5 @@ from . import views
 
 urlpatterns = [
     path("diagram/", views.DiagramView.as_view(), name="diagram"),
+    path("report/", views.ReportView.as_view(), name="report"),
 ]
