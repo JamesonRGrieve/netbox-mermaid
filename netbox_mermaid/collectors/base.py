@@ -11,7 +11,9 @@ registered in ``registry.py``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -55,29 +57,75 @@ class Edge:
     label: str = ""
 
 
+VIEWS = ("services", "physical", "logical", "all")
+
+
 @dataclass(frozen=True)
 class Scope:
     """A view window over the SoT so large deployments stay readable.
 
     ``mode`` is one of ``all`` | ``site`` | ``device`` | ``vm``; the matching id narrows the graph.
-    Collectors ask the membership helpers whether a given host/site belongs in the window.
+    ``tenant_id`` (optional, combinable with any mode) keeps only that tenant's devices and VMs,
+    plus the hypervisors that host the tenant's VMs. ``view`` picks the layers drawn:
+    ``services`` (the service/application topology, the default), ``physical`` (hypervisors, the
+    guests they run, cabling), ``logical`` (VLANs, their prefixes, which hosts sit on each), or
+    ``all``. Collectors ask the membership helpers whether a given host/site belongs in the window.
     """
 
     mode: str = "all"
     site_id: int | None = None
     device_id: int | None = None
     vm_id: int | None = None
+    tenant_id: int | None = None
+    view: str = "services"
 
     @classmethod
     def from_params(cls, params: dict[str, str]) -> Scope:
-        """Build a scope from GET params (``scope``/``site``/``device``/``vm``)."""
+        """Build a scope from GET params (``scope``/``site``/``device``/``vm``/``tenant``/``view``).
+
+        ``tenant`` is a tenant pk or slug; an unknown slug yields a tenant id that matches nothing
+        (an empty diagram), never the whole SoT."""
         site = _int_or_none(params.get("site"))
         device = _int_or_none(params.get("device"))
         vm = _int_or_none(params.get("vm"))
         mode = params.get("scope") or (
             "device" if device else "vm" if vm else "site" if site else "all"
         )
-        return cls(mode=mode, site_id=site, device_id=device, vm_id=vm)
+        view = params.get("view") or "services"
+        if view not in VIEWS:
+            view = "services"
+        return cls(
+            mode=mode,
+            site_id=site,
+            device_id=device,
+            vm_id=vm,
+            tenant_id=_tenant_id(params.get("tenant")),
+            view=view,
+        )
+
+    @cached_property
+    def _tenant_hosts(self) -> tuple[frozenset[int], frozenset[int]]:
+        """(device ids, vm ids) belonging to ``tenant_id``: the tenant's own devices and VMs, plus
+        every device that hosts one of its VMs (the VM's ``device``, or its cluster's devices)."""
+        from dcim.models import Device
+        from virtualization.models import VirtualMachine
+
+        vms = VirtualMachine.objects.filter(tenant_id=self.tenant_id)
+        vm_ids = frozenset(vms.values_list("pk", flat=True))
+        device_ids = set(Device.objects.filter(tenant_id=self.tenant_id).values_list("pk", flat=True))
+        device_ids.update(pk for pk in vms.values_list("device_id", flat=True) if pk)
+        cluster_ids = {pk for pk in vms.values_list("cluster_id", flat=True) if pk}
+        if cluster_ids:
+            device_ids.update(Device.objects.filter(cluster_id__in=cluster_ids).values_list("pk", flat=True))
+        return frozenset(device_ids), vm_ids
+
+    def tenant_device_ids(self) -> frozenset[int] | None:
+        """The tenant's device ids, or ``None`` when no tenant filter is set."""
+        return None if self.tenant_id is None else self._tenant_hosts[0]
+
+    def tenant_vm_ids(self) -> frozenset[int] | None:
+        """The tenant's VM ids, or ``None`` when no tenant filter is set."""
+        return None if self.tenant_id is None else self._tenant_hosts[1]
 
     def includes_site(self, site_id: int | None) -> bool:
         if self.mode == "all":
@@ -88,6 +136,9 @@ class Scope:
         return True
 
     def includes_device(self, device_id: int | None, site_id: int | None) -> bool:
+        tenant_devices = self.tenant_device_ids()
+        if tenant_devices is not None and device_id not in tenant_devices:
+            return False
         if self.mode == "all":
             return True
         if self.mode == "site":
@@ -97,6 +148,9 @@ class Scope:
         return False  # vm scope excludes devices
 
     def includes_vm(self, vm_id: int | None, site_id: int | None) -> bool:
+        tenant_vms = self.tenant_vm_ids()
+        if tenant_vms is not None and vm_id not in tenant_vms:
+            return False
         if self.mode == "all":
             return True
         if self.mode == "site":
@@ -104,6 +158,18 @@ class Scope:
         if self.mode == "vm":
             return vm_id == self.vm_id
         return False  # device scope excludes vms
+
+
+def _tenant_id(value: str | None) -> int | None:
+    """A tenant pk from a pk or slug; an unknown slug maps to ``0`` (no tenant has pk 0)."""
+    if not value:
+        return None
+    as_int = _int_or_none(value)
+    if as_int is not None:
+        return as_int
+    from tenancy.models import Tenant
+
+    return Tenant.objects.filter(slug=value).values_list("pk", flat=True).first() or 0
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -126,6 +192,9 @@ class Collector:
 
     app_label: str = ""
     kind: str = "generic"
+    #: Which ``Scope.view`` values draw this collector. Service/application sources by default;
+    #: the core spine overrides it to every view, the physical/logical collectors to their own.
+    views: frozenset[str] = frozenset({"services", "all"})
 
     def available(self) -> bool:
         """True when this collector's source is present. Core (empty label) is always available."""
@@ -150,6 +219,11 @@ class Collector:
         try:
             return self.collect(scope)
         except Exception:  # a single flaky source must not sink the whole SoT diagram
+            # ...but it must be visible: a swallowed FieldError once emptied the core collector in
+            # prod with no trace (NetBox 4.2's Cluster.site -> _site change).
+            logging.getLogger("netbox_mermaid").exception(
+                "collector %s failed; it contributes nothing to this diagram", type(self).__name__
+            )
             return [], []
 
 
@@ -177,8 +251,11 @@ def vm_site_id(vm: object) -> int | None:
     site_id = getattr(vm, "site_id", None)
     if site_id:
         return site_id
+    # NetBox >= 4.2: a cluster's site is the cached ``_site`` of its generic ``scope`` (there is no
+    # ``Cluster.site``; querying ``cluster__site`` raises FieldError, which safe_collect would
+    # swallow and silently empty the collector, as prod's core collector was).
     cluster = getattr(vm, "cluster", None)
-    return getattr(cluster, "site_id", None) if cluster is not None else None
+    return getattr(cluster, "_site_id", None) if cluster is not None else None
 
 
 def host_ref(obj: object) -> tuple[str | None, int | None]:

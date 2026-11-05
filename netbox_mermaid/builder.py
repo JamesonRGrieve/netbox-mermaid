@@ -86,6 +86,8 @@ _KIND_COLORS: dict[str, tuple[str, str, str]] = {
     # Proxmox guest extras
     "guestdev": ("#3e4c59", "#b8c1cc", "#ffffff"),
     "guestmount": ("#4a5568", "#cbd5e0", "#ffffff"),
+    "vlan": ("#fefcbf", "#b7791f", "#1a202c"),
+    "prefix": ("#fffff0", "#d69e2e", "#1a202c"),
 }
 _DEFAULT_COLOR = ("#4a5568", "#a0aec0", "#ffffff")
 
@@ -117,6 +119,8 @@ _KIND_SHAPE: dict[str, tuple[str, str]] = {
     "meshnode": ("(", ")"),
     "pfalias": ("{{", "}}"),
     "dhcp": ("[(", ")]"),
+    "prefix": ("[/", "/]"),
+    "vlan": ("[[", "]]"),
 }
 _DEFAULT_SHAPE = ("[", "]")
 

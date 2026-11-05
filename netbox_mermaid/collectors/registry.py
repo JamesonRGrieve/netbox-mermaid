@@ -20,6 +20,8 @@ from .dhcp import DhcpCollector
 from .email import EmailCollector
 from .federation import FederationCollector
 from .guests import GuestsCollector
+from .logical import LogicalCollector
+from .physical import PhysicalCollector
 from .hostrole import HostRoleCollector
 from .lb_acl import LbAclCollector
 from .meshcore import MeshCoreCollector
@@ -35,6 +37,9 @@ from .zfs import ZfsCollector
 COLLECTORS: list[Collector] = [
     # Core spine.
     CoreCollector(),
+    # Physical (hypervisors, guests, cabling) and logical (VLANs, prefixes) topology views.
+    PhysicalCollector(),
+    LogicalCollector(),
     # Service / application layer.
     ServicesCollector(),
     HostRoleCollector(),
@@ -58,14 +63,18 @@ COLLECTORS: list[Collector] = [
     MeshCoreCollector(),
     # Storage.
     ZfsCollector(),
+    # Guest mounts / devices (netbox-guests).
+    GuestsCollector(),
 ]
 
 
 def collect_all(scope: Scope) -> tuple[list[Node], list[Edge]]:
-    """Collect + merge every available source within ``scope``."""
+    """Collect + merge every available source drawn by ``scope.view``, within ``scope``."""
     nodes: list[Node] = []
     edges: list[Edge] = []
     for collector in COLLECTORS:
+        if scope.view not in collector.views:
+            continue
         collected_nodes, collected_edges = collector.safe_collect(scope)
         nodes.extend(collected_nodes)
         edges.extend(collected_edges)

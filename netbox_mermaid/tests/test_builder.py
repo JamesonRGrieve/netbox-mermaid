@@ -78,3 +78,31 @@ class BuilderGraphTest(TestCase):
                 self.assertIn("svc_", diagram.mermaid)
         # Absent plugin: the diagram still builds over core, which the whole-SoT test covers.
         self.assertTrue(diagram.mermaid)
+
+
+class ClusterScopedVMTest(TestCase):
+    """Regression: NetBox >= 4.2 has no ``Cluster.site`` (it is the cached ``_site`` of the generic
+    ``scope``). A ``cluster__site`` lookup raised FieldError, safe_collect swallowed it, and the
+    core collector emitted no site/device/VM at all in prod."""
+
+    @classmethod
+    def setUpTestData(cls):
+        from virtualization.models import Cluster, ClusterType, VirtualMachine
+
+        device = create_test_device("mm-cl-host")
+        cls.site = device.site
+        cluster = Cluster.objects.create(
+            name="mm-cl", type=ClusterType.objects.create(name="mm-ct", slug="mm-ct"), scope=cls.site
+        )
+        cls.vm = VirtualMachine.objects.create(name="mm-cl-vm", cluster=cluster)
+
+    def test_core_collector_does_not_fail(self):
+        from netbox_mermaid.collectors.core import CoreCollector
+
+        nodes, _edges = CoreCollector().collect(Scope())  # collect(), not safe_collect(): must not raise
+        self.assertIn(nid("vm", self.vm.pk), {n.id for n in nodes})
+
+    def test_cluster_vm_nested_under_cluster_site(self):
+        diagram = build_diagram(Scope(mode="site", site_id=self.site.pk))
+        self.assertIn(f"subgraph {nid('site', self.site.pk)}", diagram.mermaid)
+        self.assertIn(nid("vm", self.vm.pk), diagram.mermaid)

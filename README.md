@@ -31,8 +31,9 @@ uv pip install --python /opt/netbox/venv/bin/python "netbox-mermaid[all]"
 
 ## View it
 
-- **UI:** *Plugins → SoT Diagram → SoT Diagram*. Controls: a **scope** selector
-  (`Whole SoT` / `Site` / `Device` / `VM` + the matching id), a **"Sanitize (safe to share)"**
+- **UI:** *Plugins → SoT Diagram → SoT Diagram*. Controls: a **view** selector (`Services` /
+  `Physical` / `Logical` / `Everything`), a **scope** selector (`Whole SoT` / `Site` / `Device` /
+  `VM` + the matching id), a **tenant** filter (id or slug), a **"Sanitize (safe to share)"**
   toggle, a **"Copy Mermaid source"** button, and a **"Toggle source"** button. The diagram is drawn
   client-side by a **locally vendored** `mermaid.min.js` (NetBox's strict CSP blocks CDNs) via a
   static, CSP-safe init script — no inline JS. If the vendored asset is a stub, the page degrades to
@@ -40,11 +41,29 @@ uv pip install --python /opt/netbox/venv/bin/python "netbox-mermaid[all]"
 - **API:** `GET /api/plugins/mermaid/diagram/` →
 
   ```json
-  { "mermaid": "flowchart TD\n…", "node_count": 42, "edge_count": 37, "sanitized": false }
+  { "mermaid": "flowchart TD\n…", "node_count": 42, "edge_count": 37, "sanitized": false,
+    "view": "services", "tenant": null }
   ```
 
-  Query params: `?scope=all|site|device|vm`, `?site=<id>`, `?device=<id>`, `?vm=<id>`,
-  `?sanitize=true`.
+  Query params: `?view=services|physical|logical|all`, `?scope=all|site|device|vm`, `?site=<id>`,
+  `?device=<id>`, `?vm=<id>`, `?tenant=<id or slug>`, `?sanitize=true`.
+
+### Views
+
+| `view` | Draws |
+|---|---|
+| `services` (default) | the service/application layer: instances, databases, web servers, certs, mail, LB, firewall, VPN, storage |
+| `physical` | hypervisors and the guests they run (`runs on`: the VM's device, else its cluster's devices) and cables between device ports (`cable <port> ↔ <port>`) |
+| `logical` | VLANs as containers holding their prefixes; hosts on each VLAN by interface assignment (`untagged` / `tagged`) and by address (`member` for a VM, `svi` for a device such as the router holding the gateway) |
+| `all` | every layer |
+
+The site/device/VM/tenant spine is drawn in every view.
+
+### Tenant filter
+
+`tenant=<id or slug>` combines with any scope and keeps that tenant's devices and VMs, plus every
+device that hosts one of its VMs (the VM's device, or its cluster's devices); in the logical view it
+also shows the tenant's VLANs. An unknown slug yields an empty diagram, never the whole SoT.
 
 ## The SoT report — export everything
 

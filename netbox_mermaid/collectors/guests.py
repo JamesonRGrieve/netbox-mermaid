@@ -11,7 +11,7 @@ _SELECT = (
     "virtual_machine",
     "virtual_machine__site",
     "virtual_machine__cluster",
-    "virtual_machine__cluster__site",
+    "virtual_machine__cluster___site",
 )
 
 

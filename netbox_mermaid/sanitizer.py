@@ -80,6 +80,8 @@ _GENERIC_LABEL: dict[str, str] = {
     "zfsvdev": "ZFS Vdev",
     "guestdev": "Guest Device",
     "guestmount": "Guest Mount",
+    "vlan": "VLAN",
+    "prefix": "Prefix",
 }
 
 # kind -> synthetic id abbreviation (hides the real pk while keeping the kind legible).
@@ -140,6 +142,8 @@ _ID_ABBR: dict[str, str] = {
     "zfsvdev": "ZV",
     "guestdev": "GD",
     "guestmount": "GM",
+    "vlan": "VL",
+    "prefix": "PX",
 }
 
 _IP_V4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b")

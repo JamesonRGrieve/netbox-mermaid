@@ -3,8 +3,10 @@
 
 These are plain DRF ``APIView``\\ s (there is no model to expose as a ``ModelViewSet``).
 
-* ``GET /api/plugins/mermaid/diagram/`` — the Mermaid source string + counts. Query params
-  ``scope`` / ``site`` / ``device`` / ``vm`` narrow the graph; ``sanitize=true`` redacts.
+* ``GET /api/plugins/mermaid/diagram/`` — the Mermaid source string + counts. ``view`` picks the
+  layers (``services`` default | ``physical`` hypervisors/guests/cabling | ``logical`` VLANs/prefixes
+  | ``all``); ``scope`` / ``site`` / ``device`` / ``vm`` and ``tenant`` (pk or slug) narrow the
+  graph; ``sanitize=true`` redacts. The response echoes the effective ``view`` and ``tenant``.
 * ``GET /api/plugins/mermaid/report/`` — the entire source-of-truth. ``format=markdown|json|toon``
   (default markdown). ``json`` returns the structured document natively; ``markdown``/``toon`` return
   the raw text with the matching content-type. ``download=1`` adds a file-download disposition;
@@ -41,6 +43,8 @@ class DiagramAPIView(APIView):
                 "node_count": diagram.node_count,
                 "edge_count": diagram.edge_count,
                 "sanitized": diagram.sanitized,
+                "view": scope.view,
+                "tenant": scope.tenant_id,
             }
         )
 
@@ -49,6 +53,13 @@ class ReportAPIView(APIView):
     """``GET /api/plugins/mermaid/report/`` → the whole SoT in the requested format."""
 
     permission_classes = [IsAuthenticated]
+
+    def perform_content_negotiation(self, request: Request, force: bool = False):
+        """``format`` is this endpoint's own parameter (markdown | json | toon), but DRF also reads it
+        as its renderer override and 404s any value with no DRF renderer (``toon``, ``markdown``)
+        before ``get`` runs. The view returns a plain ``HttpResponse``, so negotiation only has to
+        not fail: force the fallback renderer instead of a 404."""
+        return super().perform_content_negotiation(request, force=True)
 
     def get(self, request: Request) -> HttpResponse:
         fmt = normalize_format(request.query_params.get("format"))

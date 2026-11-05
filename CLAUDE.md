@@ -35,6 +35,10 @@ safety feature — never weaken it.
   and all its models appear in the report automatically. Keep it that way: never hand-write a report
   serialiser for one model. The diagram is curated (topology only); the report is exhaustive (all
   fields) — put per-row detail omitted from the diagram there, not in a bloated collector.
+- A cluster's site is `cluster._site` (NetBox >= 4.2 `CachedScopeMixin`); never `cluster.site` /
+  `cluster__site`, which raise FieldError. `safe_collect` logs a failing collector instead of hiding it.
+- `Scope.view` picks which collectors run (`Collector.views`); `Scope.tenant_id` filters every host
+  through `includes_device` / `includes_vm`, so a collector that uses them needs no tenant code.
 - Reconstruct cross-plugin node ids via `nid(prefix, pk)` — never import a peer collector. A dangling
   edge (owning plugin absent) is dropped by the builder; that is the intended graceful behavior.
 - Escape every label through `builder.escape_label`; emit only labels into Mermaid, never `raw_attrs`.
@@ -67,7 +71,9 @@ safety feature — never weaken it.
 |------|----------------|
 | `__init__.py` | `PluginConfig` — name `netbox_mermaid`, `base_url='mermaid'`, min/max 4.6, `required_plugins=[]` |
 | `collectors/base.py` | `Node` / `Edge` / `Scope` dataclasses, `nid()` id scheme, `Collector` base + `safe_collect` guard, host-resolution helpers |
-| `collectors/core.py` | always-on core: Site / Device / VM / Tenant |
+| `collectors/core.py` | always-on core: Site / Device / VM / Tenant (drawn in every `view`) |
+| `collectors/physical.py` | `view` physical / all: VM → hosting device (`runs on`), device ↔ device cables |
+| `collectors/logical.py` | `view` logical / all: VLAN containers holding their prefixes; host → VLAN by interface assignment and by address |
 | `collectors/{services,hostrole,database,webserver,wordpress,ai,pki,email,federation,cloudflare,lb_acl,pf,dhcp,datalink,wireguard,reticulum,meshcore,zfs,guests}.py` | one optional source each (guarded on `app_label`) |
 | `collectors/registry.py` | `COLLECTORS` list + `collect_all(scope)` — the diagram extension point |
 | `builder.py` | assemble → Mermaid `flowchart TD` (subgraph nesting, classDef/shape, escaping); `build_diagram(scope, sanitize)` orchestrator |

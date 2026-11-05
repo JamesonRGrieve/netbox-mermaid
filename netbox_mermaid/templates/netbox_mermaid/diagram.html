@@ -9,6 +9,15 @@
   <div class="col col-md-12">
     <form method="get" class="row gx-2 gy-2 align-items-end" role="search" aria-label="Diagram scope controls">
       <div class="col-auto">
+        <label for="view-select" class="form-label">View</label>
+        <select id="view-select" name="view" class="form-select">
+          <option value="services"{% if scope.view == 'services' %} selected{% endif %}>Services</option>
+          <option value="physical"{% if scope.view == 'physical' %} selected{% endif %}>Physical (hypervisors, guests, cabling)</option>
+          <option value="logical"{% if scope.view == 'logical' %} selected{% endif %}>Logical (VLANs, prefixes)</option>
+          <option value="all"{% if scope.view == 'all' %} selected{% endif %}>Everything</option>
+        </select>
+      </div>
+      <div class="col-auto">
         <label for="scope-select" class="form-label">Scope</label>
         <select id="scope-select" name="scope" class="form-select">
           <option value="all"{% if scope.mode == 'all' %} selected{% endif %}>Whole SoT</option>
@@ -28,6 +37,10 @@
       <div class="col-auto">
         <label for="vm-id" class="form-label">VM ID</label>
         <input type="number" id="vm-id" name="vm" class="form-control" value="{{ scope.vm_id|default_if_none:'' }}" min="1">
+      </div>
+      <div class="col-auto">
+        <label for="tenant-filter" class="form-label">Tenant (ID or slug)</label>
+        <input type="text" id="tenant-filter" name="tenant" class="form-control" value="{{ tenant_param }}" maxlength="100">
       </div>
       <div class="col-auto">
         <div class="form-check mb-2">

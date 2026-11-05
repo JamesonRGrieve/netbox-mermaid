@@ -21,8 +21,9 @@ _TRUE = {"1", "true", "yes", "on"}
 
 
 class DiagramView(View):
-    """Whole-SoT (or scoped) Mermaid diagram. GET params: ``scope`` / ``site`` / ``device`` /
-    ``vm`` narrow the graph; ``sanitize=1`` applies the public-safe redaction."""
+    """Whole-SoT (or scoped) Mermaid diagram. GET params: ``view`` (services | physical | logical |
+    all) picks the layers; ``scope`` / ``site`` / ``device`` / ``vm`` and ``tenant`` (pk or slug)
+    narrow the graph; ``sanitize=1`` applies the public-safe redaction."""
 
     template_name = "netbox_mermaid/diagram.html"
 
@@ -36,6 +37,7 @@ class DiagramView(View):
             "edge_count": diagram.edge_count,
             "sanitized": diagram.sanitized,
             "scope": scope,
+            "tenant_param": request.GET.get("tenant", ""),
         }
         return render(request, self.template_name, context)
 

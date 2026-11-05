@@ -7,7 +7,7 @@ guard — it is the structural spine every plugin collector nests its objects on
 
 from __future__ import annotations
 
-from .base import Collector, Edge, Node, Scope, nid, vm_site_id
+from .base import VIEWS, Collector, Edge, Node, Scope, nid, vm_site_id
 
 
 class CoreCollector(Collector):
@@ -15,6 +15,7 @@ class CoreCollector(Collector):
 
     app_label = ""  # core is always present
     kind = "core"
+    views = frozenset(VIEWS)  # the structural spine every view hangs from
 
     def collect(self, scope: Scope) -> tuple[list[Node], list[Edge]]:
         from dcim.models import Device, Site
@@ -33,6 +34,9 @@ class CoreCollector(Collector):
             devices = devices.filter(site_id=scope.site_id)
         elif scope.mode == "vm":
             devices = devices.none()
+        tenant_devices = scope.tenant_device_ids()
+        if tenant_devices is not None:
+            devices = devices.filter(pk__in=tenant_devices)
         for dev in devices:
             if not scope.includes_device(dev.pk, dev.site_id):
                 continue
@@ -46,13 +50,16 @@ class CoreCollector(Collector):
                 tenants[dev.tenant_id] = dev.tenant.name
                 edges.append(Edge(nid("dev", dev.pk), nid("tenant", dev.tenant_id), "tenant"))
 
-        vms = VirtualMachine.objects.select_related("site", "cluster", "cluster__site", "tenant")
+        vms = VirtualMachine.objects.select_related("site", "cluster", "cluster___site", "tenant")
         if scope.mode == "vm":
             vms = vms.filter(pk=scope.vm_id)
         elif scope.mode == "site":
-            vms = vms.filter(Q(site_id=scope.site_id) | Q(cluster__site_id=scope.site_id))
+            vms = vms.filter(Q(site_id=scope.site_id) | Q(cluster___site_id=scope.site_id))
         elif scope.mode == "device":
             vms = vms.none()
+        tenant_vms = scope.tenant_vm_ids()
+        if tenant_vms is not None:
+            vms = vms.filter(pk__in=tenant_vms)
         for vm in vms:
             site_id = vm_site_id(vm)
             if not scope.includes_vm(vm.pk, site_id):
@@ -65,7 +72,8 @@ class CoreCollector(Collector):
                 tenants[vm.tenant_id] = vm.tenant.name
                 edges.append(Edge(nid("vm", vm.pk), nid("tenant", vm.tenant_id), "tenant"))
 
-        if scope.mode in ("all", "site"):
+        # A tenant filter draws only the sites holding that tenant's hosts (never every site).
+        if scope.mode in ("all", "site") and scope.tenant_id is None:
             sites = Site.objects.all()
             if scope.mode == "site":
                 sites = sites.filter(pk=scope.site_id)
