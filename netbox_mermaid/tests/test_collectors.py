@@ -15,8 +15,8 @@ Two concerns, both DB-free (pure):
 from django.test import SimpleTestCase
 
 from netbox_mermaid.builder import _KIND_COLORS
-from netbox_mermaid.collectors.base import Scope
-from netbox_mermaid.collectors.registry import COLLECTORS, collect_all
+from netbox_mermaid.collectors.base import Edge, Node, Scope
+from netbox_mermaid.collectors.registry import COLLECTORS, anchor_to, collect_all, hosts_in_use
 from netbox_mermaid.sanitizer import _ID_ABBR
 
 
@@ -28,6 +28,7 @@ class RegistryTest(SimpleTestCase):
             "ServicesCollector",
             "HostRoleCollector",
             "AiCollector",
+            "DnsCollector",
             "CloudflareCollector",
             "LbAclCollector",
             "PfCollector",
@@ -59,3 +60,29 @@ class KindAbbrUniquenessTest(SimpleTestCase):
         # prefix so the sanitizer can't merge two kinds under one abbreviation.
         for kind in _KIND_COLORS:
             self.assertIn(kind, _ID_ABBR, f"kind {kind!r} missing a sanitizer id abbreviation")
+
+
+class TenantAnchoringTest(SimpleTestCase):
+    """Pure checks of the registry's tenant-window pruning (no DB rows needed)."""
+
+    def test_global_objects_kept_only_when_tied_to_the_window(self):
+        anchors = [Node("site_1", "S", "site"), Node("vm_1", "app", "vm", parent="site_1")]
+        layered = [
+            Node("svc_1", "web", "service", parent="vm_1"),  # nests in the window
+            Node("aicatalog_1", "Model A", "aicatalog"),  # one hop from svc_1
+            Node("aivariant_1", "A q4", "aivariant", parent="aicatalog_1"),
+            Node("aicatalog_2", "Model B", "aicatalog"),  # nothing in the window uses it
+        ]
+        edges = [Edge("svc_1", "aivariant_1", "serves")]
+        kept = {n.id for n in anchor_to(anchors, layered, edges)}
+        self.assertEqual(kept, {"svc_1", "aivariant_1", "aicatalog_1"})
+
+    def test_services_view_drops_idle_hosts(self):
+        anchors = [
+            Node("site_1", "S", "site"),
+            Node("loc_1", "Rack", "location", parent="site_1"),
+            Node("dev_1", "switch", "device", parent="loc_1"),
+            Node("vm_1", "app", "vm", parent="site_1"),
+        ]
+        kept = {n.id for n in hosts_in_use(anchors, [Node("svc_1", "web", "service", parent="vm_1")])}
+        self.assertEqual(kept, {"site_1", "vm_1"})

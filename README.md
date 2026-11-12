@@ -52,18 +52,29 @@ uv pip install --python /opt/netbox/venv/bin/python "netbox-mermaid[all]"
 
 | `view` | Draws |
 |---|---|
-| `services` (default) | the service/application layer: instances, databases, web servers, certs, mail, LB, firewall, VPN, storage |
-| `physical` | hypervisors and the guests they run (`runs on`: the VM's device, else its cluster's devices) and cables between device ports (`cable <port> ↔ <port>`) |
-| `logical` | VLANs as containers holding their prefixes; hosts on each VLAN by interface assignment (`untagged` / `tagged`) and by address (`member` for a VM, `svi` for a device such as the router holding the gateway) |
-| `all` | every layer |
+| `services` (default) | the service/application layer, one box per host holding what runs on it (labelled `catalog` over `hostname`), each guest inside the hypervisor running it: instances, databases, web servers, certs, mail, LB, firewall, VPN, storage. The **request path** is drawn: each DNS zone (netbox-dns, with its netbox-cloudflare records) groups its records by target (`A 172.23.0.254` over `@ · auth · erp …`) and arrows to the host owning the address; each HAProxy (netbox-load-balancing) sits in its firewall's box with a line to every guest it routes to, labelled with the hostnames and backend port. Hosts, racks and rooms with nothing drawn inside are left out |
+| `physical` | devices in their rack/room (`Location`) boxes, each guest **inside** the hypervisor running it (its device, else its cluster's only device; a guest on a multi-host cluster gets `can run on` arrows instead), and **one plain line per cabled device pair** labelled with every port pair on it (`nic0 ↔ 1/46`, one per line) |
+| `logical` | a **network** node per VLAN (`VLAN <vid> <name>` over its prefix(es) and `gw <IP> · <firewall>`; a VLAN-less prefix of the tenant/site window is a network too), a **host** node per device/VM addressed in one (name over its addresses), and **a line from each network to each host on it**. Addresses match prefixes in their **own VRF** only, longest prefix first |
+| `all` | every layer, drawn left → right: DNS zones and networks on the left, each host (guests inside their hypervisor) lined to its networks with the address on the line, cabling to the right |
 
-The site/device/VM/tenant spine is drawn in every view.
+The tenant → site → location → host spine is drawn in every view. A **tenant is a bounding box**
+around its sites, never an edge target.
+
+### Layout
+
+Diagrams use straight connectors and compact spacing (an `%%{init}%%` directive ahead of the
+`flowchart` line). A container with more than six independent children (single boxes, or clusters
+of boxes joined only to each other, such as a network and the hosts on it) lays them out as a grid
+of columns instead of one very wide row, and orders each cluster to keep its lines from crossing.
+Siblings sort by kind, then naturally (`VLAN 4` before `VLAN 60`).
 
 ### Tenant filter
 
 `tenant=<id or slug>` combines with any scope and keeps that tenant's devices and VMs, plus every
 device that hosts one of its VMs (the VM's device, or its cluster's devices); in the logical view it
-also shows the tenant's VLANs. An unknown slug yields an empty diagram, never the whole SoT.
+also shows the tenant's VLANs and VLAN-less prefixes. Service-layer objects with no host (an AI model
+catalog, a CA, a Cloudflare zone) are kept only when they nest in, or are one edge from, something in
+the window. An unknown slug yields an empty diagram, never the whole SoT.
 
 ## The SoT report — export everything
 

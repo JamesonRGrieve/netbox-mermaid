@@ -39,6 +39,12 @@ safety feature — never weaken it.
   `cluster__site`, which raise FieldError. `safe_collect` logs a failing collector instead of hiding it.
 - `Scope.view` picks which collectors run (`Collector.views`); `Scope.tenant_id` filters every host
   through `includes_device` / `includes_vm`, so a collector that uses them needs no tenant code.
+- Draw **containment as nesting, not edges** (tenant box → site → location → host → guest/service)
+  and keep edges for real relationships (cables and network attachments as `style="line"`,
+  integrations, mirrors) — an operator must be able to trace what connects to what, so never trade
+  a connection line away for compactness. Judge every layout change by rendering a real tenant's
+  views to PNG and reading them as the IT tech who has to use them: one-strip widths, spaghetti,
+  untraceable connections or unlabeled boxes are bugs.
 - Reconstruct cross-plugin node ids via `nid(prefix, pk)` — never import a peer collector. A dangling
   edge (owning plugin absent) is dropped by the builder; that is the intended graceful behavior.
 - Escape every label through `builder.escape_label`; emit only labels into Mermaid, never `raw_attrs`.

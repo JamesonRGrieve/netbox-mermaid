@@ -20,7 +20,7 @@ class DiagramAPITest(APITestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertIn("mermaid", body)
-        self.assertTrue(body["mermaid"].startswith("flowchart TD"))
+        self.assertIn("\nflowchart TD\n", body["mermaid"])
         self.assertIsInstance(body["node_count"], int)
         self.assertIsInstance(body["edge_count"], int)
         self.assertGreater(body["node_count"], 0)
@@ -38,7 +38,7 @@ class DiagramAPITest(APITestCase):
     def test_get_diagram_scoped(self):
         response = self.client.get(f"{_URL}?scope=all", **self.header)
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["mermaid"].startswith("flowchart TD"))
+        self.assertIn("\nflowchart TD\n", response.json()["mermaid"])
 
     def test_unauthenticated_denied(self):
         response = self.client.get(_URL)

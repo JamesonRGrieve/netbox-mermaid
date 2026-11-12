@@ -27,7 +27,10 @@ class ServicesCollector(Collector):
             nodes.append(
                 Node(
                     nid("svc", si.pk),
-                    si.hostname or f"service {si.pk}",
+                    # What it is over where it answers: several instances on one host often
+                    # share a hostname (app, worker, DB), so the catalog name tells them apart.
+                    "\n".join(p for p in (str(catalog), si.hostname or "") if p)
+                    or f"service {si.pk}",
                     "service",
                     parent=host_id,
                     raw_attrs={"catalog": str(catalog)},

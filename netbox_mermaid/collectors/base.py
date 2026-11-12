@@ -39,6 +39,8 @@ class Node:
     ``parent``   — id of the container node this nests under (site→host→instance→detail); ``None``
                    for a top-level node. Drives Mermaid ``subgraph`` nesting.
     ``raw_attrs``— extra identifying detail for tooltips; **dropped** entirely by the sanitizer.
+    ``direction``— layout hint for a *container* (``TB`` / ``LR``): how its children flow inside its
+                   box. Not identifying, so the sanitizer keeps it. ``None`` inherits the diagram's.
     """
 
     id: str
@@ -46,15 +48,19 @@ class Node:
     kind: str
     parent: str | None = None
     raw_attrs: dict[str, str] = field(default_factory=dict)
+    direction: str | None = None
 
 
 @dataclass(frozen=True)
 class Edge:
-    """One directed cross-link. ``label`` is the relationship verb (e.g. ``"reads"``)."""
+    """One cross-link. ``label`` is the relationship verb (e.g. ``"reads"``). ``style`` is
+    ``"arrow"`` for a directed relationship or ``"line"`` for a symmetric physical link (a cable),
+    which renders without an arrowhead."""
 
     src: str
     dst: str
     label: str = ""
+    style: str = "arrow"
 
 
 VIEWS = ("services", "physical", "logical", "all")
@@ -256,6 +262,26 @@ def vm_site_id(vm: object) -> int | None:
     # swallow and silently empty the collector, as prod's core collector was).
     cluster = getattr(vm, "cluster", None)
     return getattr(cluster, "_site_id", None) if cluster is not None else None
+
+
+def vm_hosts(vm: object, cluster_cache: dict[int, list[int]]) -> list[int]:
+    """Device pks that can run ``vm``: its pinned ``device``, else every device of its cluster.
+
+    ``cluster_cache`` (cluster pk → device pks) is filled on first use so a loop over many VMs
+    queries each cluster once. A single result means the VM's hypervisor is known exactly.
+    """
+    if getattr(vm, "device_id", None):
+        return [vm.device_id]
+    cluster_id = getattr(vm, "cluster_id", None)
+    if not cluster_id:
+        return []
+    if cluster_id not in cluster_cache:
+        from dcim.models import Device
+
+        cluster_cache[cluster_id] = list(
+            Device.objects.filter(cluster_id=cluster_id).values_list("pk", flat=True)
+        )
+    return cluster_cache[cluster_id]
 
 
 def host_ref(obj: object) -> tuple[str | None, int | None]:

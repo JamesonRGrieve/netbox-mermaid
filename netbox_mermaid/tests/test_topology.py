@@ -4,9 +4,10 @@
 Seeds two tenants on one site: tenant A has a hypervisor (in a cluster), a router cabled to it, a
 VLAN with a prefix, and a VM in the cluster with an interface on that VLAN and an address in the
 prefix (the router holds the gateway address); tenant B has its own device and VM. Asserts the
-tenant window, the ``runs on`` / cable edges of the physical view, the VLAN containers and
-membership edges of the logical view, that the views stay separate, that sanitizing the logical
-view hides every address and VLAN name, and the REST surface (``tenant`` + ``view`` params).
+tenant window and tenant bounding box, guest nesting / merged plain cable lines / location boxes
+of the physical view, the logical view's network → host lines (host labels, gateway in the network
+label, VRF-correct matching), that the views stay separate, that sanitizing the logical view hides every
+address and VLAN name, and the REST surface (``tenant`` + ``view`` params).
 """
 
 from dcim.models import Cable, Interface
@@ -53,6 +54,15 @@ def seed(test_cls: type) -> None:
     test_cls.vm_b = VirtualMachine.objects.create(name="mm-vm-b", cluster=test_cls.cluster, tenant=test_cls.tenant_b)
 
 
+def box(mermaid: str, node_id: str) -> str:
+    """The body of subgraph ``node_id`` (up to its own ``end``, matched by indentation)."""
+    lines = mermaid.splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.strip().startswith(f"subgraph {node_id}["))
+    indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
+    end = next(i for i in range(start + 1, len(lines)) if lines[i] == f"{indent}end")
+    return "\n".join(lines[start + 1 : end])
+
+
 class TenantScopeTest(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -91,14 +101,47 @@ class PhysicalViewTest(TestCase):
     def setUpTestData(cls):
         seed(cls)
 
-    def test_vm_runs_on_cluster_hypervisor(self):
+    def test_tenant_is_a_bounding_box_not_an_edge_target(self):
         mermaid = build_diagram(Scope(view="physical", tenant_id=self.tenant_a.pk)).mermaid
-        self.assertIn(f'{nid("vm", self.vm_a.pk)} -->|"runs on"| {nid("dev", self.hv.pk)}', mermaid)
+        tenant = nid("tenant", self.tenant_a.pk)
+        site = nid("site", self.hv.site_id)
+        self.assertIn(f"subgraph {tenant}", mermaid)
+        self.assertLess(mermaid.index(f"subgraph {tenant}"), mermaid.index(f"subgraph {site}"))
+        self.assertNotIn(f"| {tenant}", mermaid)  # nothing points at the tenant
+        self.assertNotIn('"tenant"', mermaid)
 
-    def test_cable_between_devices(self):
+    def test_vm_nests_in_its_only_hypervisor(self):
+        mermaid = build_diagram(Scope(view="physical", tenant_id=self.tenant_a.pk)).mermaid
+        hv_box = box(mermaid, nid("dev", self.hv.pk))
+        self.assertIn(nid("vm", self.vm_a.pk), hv_box)
+        self.assertNotIn("runs on", mermaid)
+
+    def test_cable_is_one_plain_line_per_device_pair(self):
+        hv_port2 = Interface.objects.create(device=self.hv, name="eth1", type="1000base-t")
+        router_lan2 = Interface.objects.create(device=self.router, name="lan1", type="1000base-t")
+        Cable(a_terminations=[hv_port2], b_terminations=[router_lan2]).save()  # reversed A/B
         mermaid = build_diagram(Scope(view="physical")).mermaid
-        self.assertIn(f"{nid('dev', self.router.pk)} -->|", mermaid)
-        self.assertIn("cable lan0 ↔ eth0", mermaid)
+        low, high = sorted((self.hv, self.router), key=lambda d: d.pk)
+        lines = [ln for ln in mermaid.splitlines() if " ---|" in ln]
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].strip().startswith(f"{nid('dev', low.pk)} ---|"))
+        self.assertTrue(lines[0].strip().endswith(nid("dev", high.pk)))
+        self.assertIn("lan0 ↔ eth0" if low == self.router else "eth0 ↔ lan0", lines[0])
+        self.assertIn("<br/>", lines[0])  # both port pairs, one per line
+
+    def test_device_sits_in_its_location(self):
+        from dcim.models import Location
+
+        location = Location.objects.create(name="Rack Room", slug="rack-room", site=self.hv.site)
+        self.router.location = location
+        self.router.save()
+        mermaid = build_diagram(Scope(view="physical", tenant_id=self.tenant_a.pk)).mermaid
+        self.assertIn(nid("dev", self.router.pk), box(mermaid, nid("loc", location.pk)))
+
+    def test_services_view_nests_guest_in_hypervisor_too(self):
+        mermaid = build_diagram(Scope(view="services", tenant_id=self.tenant_a.pk)).mermaid
+        if f"subgraph {nid('dev', self.hv.pk)}" in mermaid:  # drawn only when something runs on it
+            self.assertIn(nid("vm", self.vm_a.pk), box(mermaid, nid("dev", self.hv.pk)))
 
     def test_physical_has_no_vlans(self):
         self.assertNotIn(nid("vlan", self.vlan.pk), build_diagram(Scope(view="physical")).mermaid)
@@ -109,26 +152,55 @@ class LogicalViewTest(TestCase):
     def setUpTestData(cls):
         seed(cls)
 
-    def test_vlan_holds_its_prefix(self):
-        mermaid = build_diagram(Scope(view="logical", tenant_id=self.tenant_a.pk)).mermaid
-        self.assertIn(f"subgraph {nid('vlan', self.vlan.pk)}", mermaid)
-        self.assertIn("VLAN 76 CORP_RDP", mermaid)
-        self.assertIn(nid("prefix", self.prefix.pk), mermaid)
+    def _vlan(self) -> str:
+        return nid("vlan", self.vlan.pk)
 
-    def test_membership_edges(self):
+    def test_network_node_titled_with_its_prefix(self):
+        mermaid = build_diagram(Scope(view="logical", tenant_id=self.tenant_a.pk)).mermaid
+        self.assertIn(f'{self._vlan()}[["VLAN 76 CORP_RDP<br/>172.23.7.248/31', mermaid)
+
+    def test_line_from_network_to_each_host_on_it(self):
+        diagram = build_diagram(Scope(view="logical"))
+        self.assertIn(f"{self._vlan()} --- {nid('vm', self.vm_a.pk)}", diagram.mermaid)
+        self.assertIn(f"{self._vlan()} --- {nid('dev', self.router.pk)}", diagram.mermaid)
+        self.assertNotIn("-->", diagram.mermaid)
+
+    def test_host_label_lists_its_addresses(self):
         mermaid = build_diagram(Scope(view="logical")).mermaid
-        vlan = nid("vlan", self.vlan.pk)
-        self.assertIn(f'{nid("vm", self.vm_a.pk)} -->|"untagged"| {vlan}', mermaid)
-        self.assertIn(f'{nid("vm", self.vm_a.pk)} -->|"member"| {vlan}', mermaid)
-        self.assertIn(f'{nid("dev", self.router.pk)} -->|"svi"| {vlan}', mermaid)
+        self.assertIn(f'{nid("vm", self.vm_a.pk)}("mm-vm-a<br/>172.23.7.249")', mermaid)
+
+    def test_gateway_named_in_network_label_not_drawn_as_line(self):
+        from dcim.models import DeviceRole
+
+        self.router.role = DeviceRole.objects.create(name="Router", slug="router")
+        self.router.save()
+        mermaid = build_diagram(Scope(view="logical")).mermaid
+        self.assertIn("gw 172.23.7.248 · mm-router", mermaid)
+        self.assertNotIn(f"{self._vlan()} --- {nid('dev', self.router.pk)}", mermaid)
+
+    def test_address_in_another_vrf_does_not_match(self):
+        """Overlapping RFC1918 space in another VRF must not attach a host to this VLAN."""
+        from ipam.models import VRF
+
+        vrf = VRF.objects.create(name="Other")
+        Prefix.objects.create(prefix="172.23.7.0/24", vrf=vrf, tenant=self.tenant_b)
+        other_if = Interface.objects.create(device=self.other, name="eth9", type="1000base-t")
+        IPAddress.objects.create(address="172.23.7.249/24", vrf=vrf, assigned_object=other_if)
+        mermaid = build_diagram(Scope(view="logical")).mermaid
+        self.assertNotIn(f"{self._vlan()} --- {nid('dev', self.other.pk)}", mermaid)
+
+    def test_unaddressed_host_not_drawn(self):
+        mermaid = build_diagram(Scope(view="logical", tenant_id=self.tenant_a.pk)).mermaid
+        self.assertNotIn(nid("dev", self.hv.pk), mermaid)  # no address: nothing to attach
 
     def test_services_view_has_no_vlans(self):
         self.assertNotIn(nid("vlan", self.vlan.pk), build_diagram(Scope()).mermaid)
 
-    def test_all_view_has_both(self):
-        mermaid = build_diagram(Scope(view="all")).mermaid
-        self.assertIn(nid("vlan", self.vlan.pk), mermaid)
-        self.assertIn("runs on", mermaid)
+    def test_all_view_has_both_and_labels_the_attachment(self):
+        diagram = build_diagram(Scope(view="all"))
+        self.assertIn("\nflowchart LR\n", diagram.mermaid)
+        self.assertIn(f'{self._vlan()} ---|"172.23.7.249"| {nid("vm", self.vm_a.pk)}', diagram.mermaid)
+        self.assertIn("lan0 ↔ eth0", diagram.mermaid)  # the cable
 
     def test_sanitized_logical_hides_addresses_and_names(self):
         diagram = build_diagram(Scope(view="logical"), sanitize=True)
@@ -158,4 +230,4 @@ class TopologyAPITest(APITestCase):
     def test_physical_view_param(self):
         response = self.client.get(f"{self._URL}?view=physical", **self.header)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("runs on", response.json()["mermaid"])
+        self.assertIn(" ---|", response.json()["mermaid"])

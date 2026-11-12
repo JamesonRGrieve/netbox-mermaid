@@ -1,25 +1,38 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Logical-topology collector: VLANs (with their prefixes nested inside) and which hosts sit on
-each. Core models only (``dcim`` / ``ipam`` / ``virtualization``), so it has no app-label guard.
+"""Logical-topology collector: networks, the hosts on them, and a line for every attachment.
 
-A host joins a VLAN two ways, both drawn as an edge host → VLAN:
+* A **network** node per VLAN (``VLAN <vid> <name>`` over its prefix(es)) and, for a tenant/site
+  window, per VLAN-less prefix of that window (a flat site LAN, a point-to-point link). Its label
+  also names the **gateway** — ``gw <IP> · <host>`` for the firewall/router SVI in it — so the
+  router does not need a line to every network.
+* A **host** node per device / VM addressed in a drawn network, labelled with its name over every
+  address it has in those networks.
+* A **line** from each network to each host addressed in it (``Edge.style="line"``; labelled with
+  the address in ``view=all``, where host labels carry only the primary IP).
 
-* **interface assignment** — a device interface's or VM interface's ``untagged_vlan`` ("untagged")
-  or ``tagged_vlans`` ("tagged");
-* **addressing** — an IP on one of the host's interfaces falls inside a prefix bound to the VLAN
-  ("member" for a VM, "svi" for a device such as the router owning the VLAN's gateway).
-
-Edge labels are verbs only: addresses appear solely as prefix node labels, which the sanitizer
-redacts. Drawn by ``view=logical`` and ``view=all``.
+Address → network matching is **within the same VRF** (overlapping RFC1918 space in different VRFs
+never cross-matches), longest prefix first. Networks sit in their site's box (the VLAN's site, else
+its group's site; a prefix's scope site). With the gateway in the label, each set of networks that
+share hosts is its own connected cluster, which the builder lays out as a grid of clusters.
+Drawn by ``view=logical`` and ``view=all``.
 """
 
 from __future__ import annotations
 
+import re
+
 from .base import Collector, Edge, Node, Scope, nid, vm_site_id
+
+#: Device roles whose SVI in a network is that network's gateway.
+_GATEWAY_ROLES = frozenset({"firewall", "router"})
+
+
+def _natural(text: str) -> list[object]:
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", text)]
 
 
 class LogicalCollector(Collector):
-    """VLAN containers (holding their prefixes) and host → VLAN membership edges."""
+    """Network nodes (VLANs, and a window's VLAN-less prefixes), host nodes, attachment lines."""
 
     app_label = ""  # core models, always present
     kind = "logical"
@@ -27,81 +40,125 @@ class LogicalCollector(Collector):
 
     def collect(self, scope: Scope) -> tuple[list[Node], list[Edge]]:
         import netaddr
-        from dcim.models import Interface
+        from django.db.models import Q
         from ipam.models import VLAN, IPAddress, Prefix
-        from virtualization.models import VMInterface
 
-        edges: list[Edge] = []
-        vlan_ids: set[int] = set()
+        prefixes = list(Prefix.objects.select_related("vlan", "vrf"))
+        network_of_prefix: dict[int, str] = {}  # prefix pk -> network node id
+        for prefix in prefixes:
+            if prefix.vlan_id:
+                network_of_prefix[prefix.pk] = nid("vlan", prefix.vlan_id)
+            elif scope.tenant_id is not None and prefix.tenant_id == scope.tenant_id:
+                network_of_prefix[prefix.pk] = nid("net", prefix.pk)
+            elif scope.mode == "site" and _prefix_site(prefix) == scope.site_id:
+                network_of_prefix[prefix.pk] = nid("net", prefix.pk)
 
-        def device_in(dev: object) -> bool:
-            return dev is not None and scope.includes_device(dev.pk, dev.site_id)
-
-        def vm_in(vm: object) -> bool:
-            return vm is not None and scope.includes_vm(vm.pk, vm_site_id(vm))
-
-        # Interface VLAN assignment (802.1Q mode on device and VM interfaces).
-        for iface in Interface.objects.select_related("device").prefetch_related("tagged_vlans"):
-            if not device_in(iface.device):
-                continue
-            host = nid("dev", iface.device_id)
-            if iface.untagged_vlan_id:
-                vlan_ids.add(iface.untagged_vlan_id)
-                edges.append(Edge(host, nid("vlan", iface.untagged_vlan_id), "untagged"))
-            for vlan in iface.tagged_vlans.all():
-                vlan_ids.add(vlan.pk)
-                edges.append(Edge(host, nid("vlan", vlan.pk), "tagged"))
-        for iface in VMInterface.objects.select_related(
-            "virtual_machine", "virtual_machine__cluster"
-        ).prefetch_related("tagged_vlans"):
-            if not vm_in(iface.virtual_machine):
-                continue
-            host = nid("vm", iface.virtual_machine_id)
-            if iface.untagged_vlan_id:
-                vlan_ids.add(iface.untagged_vlan_id)
-                edges.append(Edge(host, nid("vlan", iface.untagged_vlan_id), "untagged"))
-            for vlan in iface.tagged_vlans.all():
-                vlan_ids.add(vlan.pk)
-                edges.append(Edge(host, nid("vlan", vlan.pk), "tagged"))
-
-        # Addressing: an assigned IP inside a VLAN-bound prefix puts its host on that VLAN
-        # (longest-prefix match, so a /31 inside a /16 wins).
-        vlan_prefixes = [
-            (netaddr.IPNetwork(str(p.prefix)), p)
-            for p in Prefix.objects.filter(vlan__isnull=False).select_related("vlan")
-        ]
-        vlan_prefixes.sort(key=lambda item: item[0].prefixlen, reverse=True)
+        # Address → network, longest prefix first, same VRF only.
+        indexed = sorted(
+            (
+                (netaddr.IPNetwork(str(p.prefix)), p.vrf_id, network_of_prefix[p.pk])
+                for p in prefixes
+                if p.pk in network_of_prefix
+            ),
+            key=lambda item: item[0].prefixlen,
+            reverse=True,
+        )
+        gateways: dict[str, list[str]] = {}  # network -> ["<ip> · <host>"]
+        attached: dict[str, dict[str, str]] = {}  # host id -> {network: ip}
+        host_info: dict[str, tuple[str, str, int | None]] = {}  # host id -> (name, kind, site)
         for ip in IPAddress.objects.filter(assigned_object_id__isnull=False).prefetch_related(
             "assigned_object"
         ):
             iface = ip.assigned_object
             device = getattr(iface, "device", None)
             vm = getattr(iface, "virtual_machine", None)
-            if device is not None and device_in(device):
-                host, verb = nid("dev", device.pk), "svi"
-            elif vm is not None and vm_in(vm):
-                host, verb = nid("vm", vm.pk), "member"
+            if device is not None and scope.includes_device(device.pk, device.site_id):
+                host_id, kind, site_id = nid("dev", device.pk), "device", device.site_id
+                name = device.name or f"device {device.pk}"
+                gateway = (getattr(getattr(device, "role", None), "slug", "") or "") in _GATEWAY_ROLES
+            elif vm is not None and scope.includes_vm(vm.pk, vm_site_id(vm)):
+                host_id, kind, site_id = nid("vm", vm.pk), "vm", vm_site_id(vm)
+                name, gateway = vm.name or f"vm {vm.pk}", False
             else:
                 continue
-            addr = netaddr.IPAddress(str(ip.address.ip))
-            for network, prefix in vlan_prefixes:
-                if addr in network:
-                    vlan_ids.add(prefix.vlan_id)
-                    edges.append(Edge(host, nid("vlan", prefix.vlan_id), verb))
-                    break
+            address = netaddr.IPAddress(str(ip.address.ip))
+            network = next(
+                (net for cidr, vrf, net in indexed if vrf == ip.vrf_id and address in cidr), None
+            )
+            if network is None:
+                continue
+            if gateway:
+                gateways.setdefault(network, []).append(f"{address} · {name}")
+            else:
+                attached.setdefault(host_id, {})[network] = str(address)
+                host_info[host_id] = (name, kind, site_id)
 
-        # A tenant or site window also shows that tenant's / site's VLANs with no members yet.
+        # Which networks to draw: every one a drawn host or gateway is on, plus (tenant / site
+        # window) that window's VLANs even with nothing on them yet.
+        used = set(gateways) | {net for nets in attached.values() for net in nets}
+        vlan_ids = {int(net.split("_", 1)[1]) for net in used if net.startswith("vlan_")}
         if scope.tenant_id is not None:
             vlan_ids.update(VLAN.objects.filter(tenant_id=scope.tenant_id).values_list("pk", flat=True))
+            vlan_ids = set(
+                VLAN.objects.filter(pk__in=vlan_ids)
+                .filter(Q(tenant__isnull=True) | Q(tenant_id=scope.tenant_id))
+                .values_list("pk", flat=True)
+            )
         if scope.mode == "site":
             vlan_ids.update(VLAN.objects.filter(site_id=scope.site_id).values_list("pk", flat=True))
 
+        cidrs: dict[str, list[str]] = {}
+        for prefix in prefixes:
+            network = network_of_prefix.get(prefix.pk)
+            if network:
+                cidrs.setdefault(network, []).append(str(prefix.prefix))
+
+        def label(title: str, network: str, with_cidrs: bool = True) -> str:
+            lines = [title, *sorted(cidrs.get(network, []) if with_cidrs else [], key=_natural)]
+            lines += [f"gw {gw}" for gw in sorted(gateways.get(network, []), key=_natural)]
+            return "\n".join(lines)
+
         nodes: list[Node] = []
-        for vlan in VLAN.objects.filter(pk__in=vlan_ids):
-            nodes.append(Node(nid("vlan", vlan.pk), f"VLAN {vlan.vid} {vlan.name}", "vlan"))
-        for _network, prefix in vlan_prefixes:
-            if prefix.vlan_id in vlan_ids:
-                nodes.append(
-                    Node(nid("prefix", prefix.pk), str(prefix.prefix), "prefix", parent=nid("vlan", prefix.vlan_id))
-                )
+        drawn: set[str] = set()
+        for vlan in VLAN.objects.filter(pk__in=vlan_ids).select_related("group"):
+            network = nid("vlan", vlan.pk)
+            site_id = vlan.site_id or _group_site(vlan)
+            parent = nid("site", site_id) if site_id else None
+            nodes.append(Node(network, label(f"VLAN {vlan.vid} {vlan.name}", network), "vlan", parent=parent))
+            drawn.add(network)
+        for prefix in prefixes:
+            network = nid("net", prefix.pk)
+            if network_of_prefix.get(prefix.pk) != network or network not in used:
+                continue  # VLAN-less prefixes are drawn only when something is on them
+            site_id = _prefix_site(prefix)
+            parent = nid("site", site_id) if site_id else None
+            title = f"{prefix.prefix} ({prefix.vrf.name})" if prefix.vrf_id else str(prefix.prefix)
+            nodes.append(Node(network, label(title, network, with_cidrs=False), "vlan", parent=parent))
+            drawn.add(network)
+
+        edges: list[Edge] = []
+        for host_id, networks in attached.items():
+            networks = {net: ip for net, ip in networks.items() if net in drawn}
+            if not networks:
+                continue
+            name, kind, site_id = host_info[host_id]
+            addresses = "\n".join(sorted(networks.values(), key=_natural))
+            parent = nid("site", site_id) if site_id else None
+            nodes.append(Node(host_id, f"{name}\n{addresses}", kind, parent=parent))
+            for network, address in networks.items():
+                text = address if scope.view == "all" else ""
+                edges.append(Edge(network, host_id, text, style="line"))
         return nodes, edges
+
+
+def _group_site(vlan: object) -> int | None:
+    """The site a VLAN's group is scoped to, if any (``VLANGroup.scope`` is generic)."""
+    group = getattr(vlan, "group", None)
+    if group is None:
+        return None
+    return getattr(group, "_site_id", None)
+
+
+def _prefix_site(prefix: object) -> int | None:
+    """The site a prefix is scoped to (NetBox >= 4.2 ``CachedScopeMixin`` ``_site``), if any."""
+    return getattr(prefix, "_site_id", None)

@@ -17,6 +17,7 @@ from .core import CoreCollector
 from .database import DatabaseCollector
 from .datalink import DataLinkCollector
 from .dhcp import DhcpCollector
+from .dns import DnsCollector
 from .email import EmailCollector
 from .federation import FederationCollector
 from .guests import GuestsCollector
@@ -51,7 +52,8 @@ COLLECTORS: list[Collector] = [
     PkiCollector(),
     EmailCollector(),
     FederationCollector(),
-    # Edge / delivery / load-balancing.
+    # Edge / delivery / load-balancing: name → address → load balancer → service.
+    DnsCollector(),
     CloudflareCollector(),
     LbAclCollector(),
     # Networking layer (firewall, DHCP, VPN, mesh).
@@ -68,14 +70,84 @@ COLLECTORS: list[Collector] = [
 ]
 
 
+#: Collectors that scope themselves exactly (the spine and the topology views); every other
+#: layer's output is anchored to their nodes under a tenant filter.
+_SELF_SCOPED = frozenset({"core", "physical", "logical"})
+
+
 def collect_all(scope: Scope) -> tuple[list[Node], list[Edge]]:
     """Collect + merge every available source drawn by ``scope.view``, within ``scope``."""
-    nodes: list[Node] = []
+    anchors: list[Node] = []
+    layered: list[Node] = []
     edges: list[Edge] = []
     for collector in COLLECTORS:
         if scope.view not in collector.views:
             continue
         collected_nodes, collected_edges = collector.safe_collect(scope)
-        nodes.extend(collected_nodes)
+        (anchors if collector.kind in _SELF_SCOPED else layered).extend(collected_nodes)
         edges.extend(collected_edges)
-    return dedupe_nodes(nodes), dedupe_edges(edges)
+    if scope.tenant_id is not None:
+        layered = anchor_to(anchors, layered, edges)
+    if scope.view == "services":
+        anchors = hosts_in_use(anchors, layered)
+    nodes = dedupe_nodes(anchors + layered)
+    kept = {n.id for n in nodes}
+    return nodes, [e for e in dedupe_edges(edges) if e.src in kept and e.dst in kept]
+
+
+def anchor_to(anchors: list[Node], layered: list[Node], edges: list[Edge]) -> list[Node]:
+    """The ``layered`` nodes that belong to a tenant window drawn by ``anchors``.
+
+    Service-layer collectors scope by host, but global objects (an AI model catalog, a CA, a
+    Cloudflare zone) carry no host and would otherwise flood a tenant diagram. Keep a layered node
+    when it nests (at any depth) in an anchor, or is one edge from such a node — the catalog entry
+    a tenant's deployment runs, the CA that issued its cert — together with that node's parents.
+    """
+    by_id = {n.id: n for n in layered}
+    anchor_ids = {n.id for n in anchors}
+    inside: dict[str, bool] = {}
+
+    def nested(node_id: str, seen: frozenset[str] = frozenset()) -> bool:
+        if node_id in anchor_ids:
+            return True
+        if node_id in inside:
+            return inside[node_id]
+        node = by_id.get(node_id)
+        result = bool(
+            node and node.parent and node.parent not in seen and nested(node.parent, seen | {node_id})
+        )
+        inside[node_id] = result
+        return result
+
+    kept = {n.id for n in layered if nested(n.id)}
+    reach = anchor_ids | kept
+    for edge in edges:
+        for near, far in ((edge.src, edge.dst), (edge.dst, edge.src)):
+            if near in reach and far in by_id:
+                kept.add(far)
+    for node_id in list(kept):  # parents of hop-in nodes, so they still sit in their container
+        parent = by_id[node_id].parent
+        while parent in by_id and parent not in kept:
+            kept.add(parent)
+            parent = by_id[parent].parent
+    return [n for n in layered if n.id in kept]
+
+
+#: Spine kinds the services view keeps only when something is drawn inside them.
+_PRUNABLE_SPINE = frozenset({"device", "vm", "location"})
+
+
+def hosts_in_use(anchors: list[Node], layered: list[Node]) -> list[Node]:
+    """The services view's spine without hosts (and racks/rooms) that run nothing drawn.
+
+    A switch or an idle server says nothing about services; leaving it in only widens the
+    diagram. Sites and tenants stay so the bounding boxes read the same as in other views.
+    """
+    by_id = {n.id: n for n in anchors}
+    used: set[str] = set()
+    for node in layered:
+        parent = node.parent
+        while parent in by_id and parent not in used:
+            used.add(parent)
+            parent = by_id[parent].parent
+    return [n for n in anchors if n.kind not in _PRUNABLE_SPINE or n.id in used]

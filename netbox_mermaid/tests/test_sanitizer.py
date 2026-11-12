@@ -95,3 +95,21 @@ class SanitizerLeakTest(SimpleTestCase):
         device = next(n for n in self.nodes if n.kind == "device")
         dbserver = next(n for n in self.nodes if n.kind == "dbserver")
         self.assertEqual(dbserver.parent, device.id)
+
+
+class HostnameScrubTest(SimpleTestCase):
+    """Load-balancer lines carry the hostnames they route: those must not survive sanitizing."""
+
+    def test_routed_hostnames_scrubbed_from_edge_labels(self):
+        nodes = [Node("lb_1", "HAProxy", "lblistener"), Node("vm_2", "app", "vm")]
+        edges = [Edge("lb_1", "vm_2", "auth.client.example\nwww.client.example.\n→ :80")]
+        _nodes, clean = Sanitizer().sanitize(nodes, edges)
+        self.assertNotIn("client.example", clean[0].label)
+        self.assertIn("«host»", clean[0].label)
+        self.assertIn("→ :80", clean[0].label)  # ports are not identifying
+
+    def test_port_and_path_labels_untouched(self):
+        nodes = [Node("dev_1", "a", "device"), Node("dev_2", "b", "device")]
+        edges = [Edge("dev_1", "dev_2", "nic0 ↔ 1/46", style="line")]
+        _nodes, clean = Sanitizer().sanitize(nodes, edges)
+        self.assertEqual(clean[0].label, "nic0 ↔ 1/46")

@@ -56,7 +56,8 @@ One module per source under `collectors/`, each a `Collector` subclass:
 | `EmailCollector` | `netbox_email` | MailDomain (under service) → Mailbox / Alias; MailRelay |
 | `FederationCollector` | `netbox_federation` | FederationRealm (under service) → FederationPeer |
 | `CloudflareCollector` | `netbox_cloudflare` | Tunnel → Ingress / Record; LoadBalancer → Pool → Origin; Pool → Monitor |
-| `LbAclCollector` | `netbox_load_balancing_acl` | ACL / RoutingRule / Certificate grouped under a synthetic Listener container |
+| `DnsCollector` | `netbox_dns` (+ `netbox_cloudflare` records) | zone box in the tenant box; records grouped per (type, value) with every name; A/AAAA group → host owning the address. SOA dropped, NS one entry, TXT-style strings left to the report |
+| `LbAclCollector` | `netbox_load_balancing_acl` (+ `netbox_load_balancing`) | one HAProxy node per LB device (its listeners), with a line to each guest a pool member lives on, labelled with the `host_matches` hostnames (`(default)` for the default backend) and backend port. ACL / certificate rows are left to the report |
 | `PfCollector` | `netbox_pf` | Gateway / GatewayGroup (under host) + group→gateway tier edges; Alias |
 | `DhcpCollector` | `netbox_dhcp` | DHCPScope / v6 subnet / v6 peer (under host) |
 | `DataLinkCollector` | `netbox_data_link` | STP / LLDP / DHCP-snooping config (under host) |
@@ -109,6 +110,33 @@ append the instance to `COLLECTORS` in `registry.py`. Nothing else changes.
 - **Escaping.** `escape_label` double-quotes every label and replaces Mermaid-special characters
   with numeric entities (`#` first so later insertions are not re-escaped): `"`→`#34;`, `<`→`#60;`,
   `>`→`#62;`, `|`→`#124;`, `{`/`}`→`#123;`/`#125;`, newlines→`<br/>`. Output parses cleanly.
+- **Edge style.** `Edge.style="line"` renders `---` (no arrowhead) — used for cables and network attachments, which are
+  symmetric; everything else is a directed `-->`.
+- **Direction.** `render(nodes, edges, direction)` emits `flowchart TD`, or `flowchart LR` for
+  the `all` view (`_LR_VIEWS`): there every guest links to a network, and top-down those links pin
+  a hypervisor's guests into one row thousands of pixels wide. Mermaid lays a subgraph with no
+  `direction` of its own out top-down whatever the diagram's direction, so an LR diagram states
+  `direction LR` on every box.
+- **Grid layout.** Dagre puts every unconnected sibling, or sibling cluster, side by side. `_gridify`
+  splits each container's children into **units**: connected components of the edges running
+  between them (an edge to a descendant counts for the child holding it). Units with an edge that
+  leaves the container stay put. When there are more than `_GRID_MIN` free units, they are dealt
+  in order into invisible `row`-kind column containers that run across the parent's flow (`LR`
+  columns under a top-down parent, `TB` rows under a left-to-right one): with no links between
+  them, Mermaid stacks a column's units and places the columns side by side. Column count is
+  ≈√n for single nodes (√(n/2) for boxes of boxes, which are wider than tall), else ≈√(rows/3)
+  over the units' estimated heights. Units sort by their edge-source side (a cluster reads by its
+  network, so clusters run in VLAN order).
+- **Crossing reduction.** Dagre keeps definition order where it can, so `_unit_order` computes it:
+  sources first (pulled together by the most-linked targets), then two-layer barycenter sweeps,
+  keeping the order with the fewest crossings. Edges are emitted in node-emission order, since
+  dagre's initial ordering walks them.
+- **Mermaid 11 quirks** this works around: links between subgraphs crash dagre (`Cannot set
+  properties of undefined (setting 'rank')`), so no `~~~` layout links are used; sibling subgraphs
+  are laid out in reverse definition order, so `_emit_order` emits leaves in order and
+  sub-containers reversed; a subgraph with no `direction` is not reliably laid out in its parent's,
+  so every gridded container and every box moved into a column gets an explicit one. Column
+  wrappers are excluded from `node_count`.
 - **Determinism.** Roots, children, and edges are sorted, so identical input yields byte-identical
   Mermaid — important for the sanitizer's determinism guarantee and for stable tests.
 - The only text that reaches the rendered Mermaid is node **labels** and edge **labels**;

@@ -1,51 +1,48 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Physical-topology collector: which hypervisor each guest runs on, and the cabling between
-devices. Core models only (``dcim`` / ``virtualization``), so it has no app-label guard.
+"""Physical-topology collector: the cabling between devices, and guest placement the spine can't
+show by nesting. Core models only (``dcim`` / ``virtualization``), so it has no app-label guard.
 
-Drawn by ``view=physical`` and ``view=all``. The device/VM vertices themselves come from the core
-collector; this one adds the edges between them, so a scope that leaves one end out simply drops
-that edge in the builder.
+Drawn by ``view=physical`` and ``view=all``. The core collector already nests every guest whose
+hypervisor is known exactly inside that hypervisor's box, so this collector only adds:
+
+* **cables** — one plain line (no arrowhead: a cable is symmetric) per pair of connected devices,
+  labelled with every port pair on it (``1/46 ↔ nic0`` one per line), instead of one arrow per
+  cable;
+* **"can run on"** — for a guest on a multi-host cluster with no pinned device, an edge to each
+  candidate hypervisor.
 """
 
 from __future__ import annotations
 
-from .base import Collector, Edge, Node, Scope, nid, vm_site_id
+from .base import Collector, Edge, Node, Scope, nid, vm_hosts, vm_site_id
 
 
 class PhysicalCollector(Collector):
-    """VM → hosting device ("runs on") and device ↔ device cables ("cable <a> ↔ <b>")."""
+    """Device ↔ device cables (merged per device pair) and ambiguous-guest placement edges."""
 
     app_label = ""  # core models, always present
     kind = "physical"
     views = frozenset({"physical", "all"})
 
     def collect(self, scope: Scope) -> tuple[list[Node], list[Edge]]:
-        from dcim.models import Cable, Device
+        from dcim.models import Cable
         from virtualization.models import VirtualMachine
 
         edges: list[Edge] = []
 
-        # Guests → the hypervisor(s) they run on: the VM's own device when set, else every device
-        # of its cluster (a VM pinned to no device can run on any of them).
-        cluster_devices: dict[int, list[int]] = {}
+        # Guests whose hypervisor is ambiguous (multi-host cluster, no pinned device).
+        cluster_cache: dict[int, list[int]] = {}
         for vm in VirtualMachine.objects.select_related("site", "cluster", "cluster___site"):
             if not scope.includes_vm(vm.pk, vm_site_id(vm)):
                 continue
-            if vm.device_id:
-                hosts = [vm.device_id]
-            elif vm.cluster_id:
-                if vm.cluster_id not in cluster_devices:
-                    cluster_devices[vm.cluster_id] = list(
-                        Device.objects.filter(cluster_id=vm.cluster_id).values_list("pk", flat=True)
-                    )
-                hosts = cluster_devices[vm.cluster_id]
-            else:
-                hosts = []
-            for host in hosts:
-                edges.append(Edge(nid("vm", vm.pk), nid("dev", host), "runs on"))
+            hosts = vm_hosts(vm, cluster_cache)
+            if len(hosts) > 1:
+                for host in hosts:
+                    edges.append(Edge(nid("vm", vm.pk), nid("dev", host), "can run on"))
 
-        # Cables between device ports (interfaces, front/rear ports, console/power ports): one edge
-        # per A-end × B-end pair of distinct devices, labelled with both port names.
+        # Cables between device ports (interfaces, front/rear ports, console/power ports), merged
+        # so each connected device pair gets one line listing all its port pairs.
+        pairs: dict[tuple[int, int], list[str]] = {}
         for cable in Cable.objects.prefetch_related("terminations__termination"):
             ends: dict[str, list[tuple[object, str]]] = {"A": [], "B": []}
             for term in cable.terminations.all():
@@ -63,7 +60,13 @@ class PhysicalCollector(Collector):
                         and scope.includes_device(dev_b.pk, dev_b.site_id)
                     ):
                         continue
-                    edges.append(
-                        Edge(nid("dev", dev_a.pk), nid("dev", dev_b.pk), f"cable {port_a} ↔ {port_b}")
-                    )
+                    # Orient each pair low-pk → high-pk so A/B order never splits a pair.
+                    if dev_a.pk < dev_b.pk:
+                        key, text = (dev_a.pk, dev_b.pk), f"{port_a} ↔ {port_b}"
+                    else:
+                        key, text = (dev_b.pk, dev_a.pk), f"{port_b} ↔ {port_a}"
+                    pairs.setdefault(key, []).append(text)
+        for (low, high), ports in pairs.items():
+            label = "\n".join(sorted(set(ports)))
+            edges.append(Edge(nid("dev", low), nid("dev", high), label, style="line"))
         return [], edges

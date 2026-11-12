@@ -25,6 +25,7 @@ from .collectors.base import Edge, Node
 # kind -> human generic prefix for the redacted label.
 _GENERIC_LABEL: dict[str, str] = {
     "site": "Site",
+    "location": "Location",
     "device": "Host",
     "vm": "VM",
     "tenant": "Tenant",
@@ -57,6 +58,8 @@ _GENERIC_LABEL: dict[str, str] = {
     "cftunnel": "Cloudflare Tunnel",
     "cfingress": "Tunnel Ingress",
     "cfrecord": "DNS Record",
+    "dnszone": "DNS Zone",
+    "dnsrecord": "DNS Records",
     "cflb": "Cloudflare Load Balancer",
     "cfpool": "LB Pool",
     "cforigin": "LB Origin",
@@ -87,6 +90,7 @@ _GENERIC_LABEL: dict[str, str] = {
 # kind -> synthetic id abbreviation (hides the real pk while keeping the kind legible).
 _ID_ABBR: dict[str, str] = {
     "site": "S",
+    "location": "LOC",
     "device": "H",
     "vm": "V",
     "tenant": "T",
@@ -119,6 +123,8 @@ _ID_ABBR: dict[str, str] = {
     "cftunnel": "CFT",
     "cfingress": "CFI",
     "cfrecord": "CFR",
+    "dnszone": "DZ",
+    "dnsrecord": "DR",
     "cflb": "CFLB",
     "cfpool": "CFP",
     "cforigin": "CFO",
@@ -151,7 +157,12 @@ _IP_V6 = re.compile(r"\b(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?:/\d{1,3})?\
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.\w+\b")
 _SECRET = re.compile(r"\b(?:secret|kv|openbao|bao|vault|credential)[\w./:-]*", re.IGNORECASE)
 
+# A dotted DNS name ending in an alphabetic TLD (``auth.example.com``, ``example.com.``): edge labels
+# now carry the hostnames a load balancer routes, which identify the client.
+_FQDN = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}\b\.?", re.IGNORECASE)
+
 _IP_PLACEHOLDER = "«ip»"
+_HOST_PLACEHOLDER = "«host»"
 _EMAIL_PLACEHOLDER = "«email»"
 _SECRET_PLACEHOLDER = "«secret»"
 
@@ -195,6 +206,7 @@ class Sanitizer:
                 kind=node.kind,
                 parent=self._id_map.get(node.parent) if node.parent else None,
                 raw_attrs={},
+                direction=node.direction,
             )
             for node in ordered
         ]
@@ -205,7 +217,9 @@ class Sanitizer:
             dst = self._id_map.get(edge.dst)
             if src is None or dst is None:
                 continue  # endpoint fell outside the graph; drop to keep output coherent
-            clean_edges.append(Edge(src=src, dst=dst, label=self._scrub_text(edge.label)))
+            clean_edges.append(
+                Edge(src=src, dst=dst, label=self._scrub_text(edge.label), style=edge.style)
+            )
         return clean_nodes, clean_edges
 
     def _redact_node(self, node: Node) -> tuple[str, str]:
@@ -229,4 +243,5 @@ class Sanitizer:
         out = _IP_V6.sub(_IP_PLACEHOLDER, out)
         out = _EMAIL.sub(_EMAIL_PLACEHOLDER, out)
         out = _SECRET.sub(_SECRET_PLACEHOLDER, out)
+        out = _FQDN.sub(_HOST_PLACEHOLDER, out)
         return out
