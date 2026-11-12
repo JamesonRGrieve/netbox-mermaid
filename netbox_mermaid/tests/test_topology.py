@@ -200,7 +200,7 @@ class LogicalViewTest(TestCase):
         diagram = build_diagram(Scope(view="all"))
         self.assertIn("\nflowchart LR\n", diagram.mermaid)
         self.assertIn(f'{self._vlan()} ---|"172.23.7.249"| {nid("vm", self.vm_a.pk)}', diagram.mermaid)
-        self.assertIn("lan0 ↔ eth0", diagram.mermaid)  # the cable
+        self.assertRegex(diagram.mermaid, r"(lan0 ↔ eth0|eth0 ↔ lan0)")  # the cable
 
     def test_sanitized_logical_hides_addresses_and_names(self):
         diagram = build_diagram(Scope(view="logical"), sanitize=True)

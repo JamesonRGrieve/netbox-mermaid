@@ -84,5 +84,16 @@ class TenantAnchoringTest(SimpleTestCase):
             Node("dev_1", "switch", "device", parent="loc_1"),
             Node("vm_1", "app", "vm", parent="site_1"),
         ]
-        kept = {n.id for n in hosts_in_use(anchors, [Node("svc_1", "web", "service", parent="vm_1")])}
+        kept = {n.id for n in hosts_in_use(anchors, [Node("svc_1", "web", "service", parent="vm_1")], [])}
         self.assertEqual(kept, {"site_1", "vm_1"})
+
+    def test_services_view_keeps_edge_targets_and_everything_without_service_data(self):
+        anchors = [
+            Node("site_1", "S", "site"),
+            Node("dev_1", "firewall", "device", parent="site_1"),
+            Node("dev_2", "switch", "device", parent="site_1"),
+        ]
+        zone = [Node("dnszone_1", "z", "dnszone"), Node("dnszone_1__r0", "A", "dnsrecord", parent="dnszone_1")]
+        kept = {n.id for n in hosts_in_use(anchors, zone, [Edge("dnszone_1__r0", "dev_1", "")])}
+        self.assertEqual(kept, {"site_1", "dev_1"})
+        self.assertEqual(hosts_in_use(anchors, [], []), anchors)

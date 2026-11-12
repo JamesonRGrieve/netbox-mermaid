@@ -89,7 +89,7 @@ def collect_all(scope: Scope) -> tuple[list[Node], list[Edge]]:
     if scope.tenant_id is not None:
         layered = anchor_to(anchors, layered, edges)
     if scope.view == "services":
-        anchors = hosts_in_use(anchors, layered)
+        anchors = hosts_in_use(anchors, layered, edges)
     nodes = dedupe_nodes(anchors + layered)
     kept = {n.id for n in nodes}
     return nodes, [e for e in dedupe_edges(edges) if e.src in kept and e.dst in kept]
@@ -137,17 +137,28 @@ def anchor_to(anchors: list[Node], layered: list[Node], edges: list[Edge]) -> li
 _PRUNABLE_SPINE = frozenset({"device", "vm", "location"})
 
 
-def hosts_in_use(anchors: list[Node], layered: list[Node]) -> list[Node]:
-    """The services view's spine without hosts (and racks/rooms) that run nothing drawn.
+def hosts_in_use(anchors: list[Node], layered: list[Node], edges: list[Edge]) -> list[Node]:
+    """The services view's spine without hosts (and racks/rooms) that take no part in it.
 
     A switch or an idle server says nothing about services; leaving it in only widens the
-    diagram. Sites and tenants stay so the bounding boxes read the same as in other views.
+    diagram. A host is kept when a service-layer node is drawn inside it, or when it is one end
+    of an edge from a service-layer node (the firewall a DNS name resolves to, the guest a load
+    balancer routes to). With no service-layer data at all (no such plugin installed) nothing is
+    pruned, so the view still shows the estate. Sites and tenants always stay, so the bounding
+    boxes read the same as in other views.
     """
+    if not layered:
+        return anchors
     by_id = {n.id: n for n in anchors}
+    layered_ids = {n.id for n in layered}
+    starts = [n.parent for n in layered]
+    for edge in edges:
+        if edge.src in layered_ids or edge.dst in layered_ids:
+            starts += [edge.src, edge.dst]
     used: set[str] = set()
-    for node in layered:
-        parent = node.parent
-        while parent in by_id and parent not in used:
-            used.add(parent)
-            parent = by_id[parent].parent
+    for start in starts:
+        node_id = start
+        while node_id in by_id and node_id not in used:
+            used.add(node_id)
+            node_id = by_id[node_id].parent
     return [n for n in anchors if n.kind not in _PRUNABLE_SPINE or n.id in used]
